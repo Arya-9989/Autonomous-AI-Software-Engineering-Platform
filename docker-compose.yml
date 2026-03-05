@@ -1,0 +1,69 @@
+# 🐳 docker-compose.yml
+# Docker is like a lunchbox that packs everything your app needs!
+# Run with: docker-compose up
+# Stop with: docker-compose down
+
+version: "3.9"
+
+services:
+
+  # 🗄️ PostgreSQL Database (runs locally for development)
+  db:
+    image: postgres:16
+    container_name: aiplatform_db
+    environment:
+      POSTGRES_USER: aiplatform
+      POSTGRES_PASSWORD: devpassword123
+      POSTGRES_DB: aiplatform
+    ports:
+      - "5432:5432"     # Your app connects to localhost:5432
+    volumes:
+      - postgres_data:/var/lib/postgresql/data   # Save data even when container restarts!
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aiplatform"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 🔴 Redis (for caching and rate limiting - makes your app faster!)
+  redis:
+    image: redis:7-alpine
+    container_name: aiplatform_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  # 🚀 Backend API (your FastAPI app)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: aiplatform_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://aiplatform:devpassword123@db:5432/aiplatform
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app    # Live code reloading!
+    depends_on:
+      db:
+        condition: service_healthy
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  # 🌐 Frontend (simple nginx server for HTML/CSS/JS)
+  frontend:
+    image: nginx:alpine
+    container_name: aiplatform_frontend
+    ports:
+      - "3000:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html    # Serve your HTML files
+
+
+# 💾 Named volumes (persist data between container restarts)
+volumes:
+  postgres_data:
+  redis_data:
