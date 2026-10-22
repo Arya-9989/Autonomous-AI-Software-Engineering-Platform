@@ -24,7 +24,10 @@ export function StageTimeline({ stages }: { stages: Stage[] }) {
         labels="full"
         caption="Pipeline progress"
       />
-      <ol className="mt-6 grid gap-2 md:grid-cols-5 md:gap-3" aria-label="Stage details">
+      <ol
+        className="mt-6 grid gap-2 md:max-lg:grid-cols-5 md:max-lg:gap-3 2xl:grid-cols-5 2xl:gap-3"
+        aria-label="Stage details"
+      >
         {stages.map((stage) => {
           const tokens = stage.input_tokens + stage.output_tokens;
           return (
@@ -37,21 +40,26 @@ export function StageTimeline({ stages }: { stages: Stage[] }) {
                 stage.status === "running" ? "bg-accent-soft" : "bg-surface-2",
               )}
             >
-              <p className="text-[14px] leading-5 font-medium text-ink md:hidden">{stage.label}</p>
-              <p
-                className={cx(
-                  "text-[12px] leading-4 tabular-nums",
-                  stage.status === "running"
-                    ? "text-accent-ink"
-                    : stage.status === "failed"
-                      ? "text-bad"
-                      : "text-ink-2",
-                )}
-              >
-                {STATUS_TEXT[stage.status]}
-                {stage.duration_s !== null && ` · ${formatDuration(stage.duration_s)}`}
-                {tokens > 0 && ` · ${formatTokens(tokens)} tokens`}
-              </p>
+              {/* Rows (narrow and mid widths) show the label; the five-column layouts rely on the rail. */}
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+                <p className="text-[14px] leading-5 font-medium text-ink md:max-lg:hidden 2xl:hidden">
+                  {stage.label}
+                </p>
+                <p
+                  className={cx(
+                    "text-[12px] leading-4 tabular-nums",
+                    stage.status === "running"
+                      ? "text-accent-ink"
+                      : stage.status === "failed"
+                        ? "text-bad"
+                        : "text-ink-2",
+                  )}
+                >
+                  {STATUS_TEXT[stage.status]}
+                  {stage.duration_s !== null && ` · ${formatDuration(stage.duration_s)}`}
+                  {tokens > 0 && ` · ${formatTokens(tokens)} tokens`}
+                </p>
+              </div>
               <AnimatePresence initial={false}>
                 {stage.summary && (
                   <m.p
