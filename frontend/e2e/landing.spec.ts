@@ -81,3 +81,22 @@ test.describe("landing page", () => {
     await expect(page.getByRole("heading", { name: "What should we build?" })).toBeVisible();
   });
 });
+
+test.describe("landing page without JavaScript", () => {
+  test.use({ javaScriptEnabled: false });
+
+  test("is prerendered: the headline and the real run are in the HTML", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+      /Plain English in\.\s*Deployable project out\./,
+    );
+    await expect(page.getByText(sample.spec, { exact: false }).first()).toBeVisible();
+  });
+});
+
+test("the landing page fits a 320px phone", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 720 });
+  await page.goto("/");
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await expectNoHorizontalOverflow(page);
+});

@@ -110,3 +110,68 @@ test.describe("studio", () => {
     await expect(page).toHaveURL(/\/app\/jobs\/does-not-exist$/);
   });
 });
+
+test.describe("studio details", () => {
+  test("an unknown job costs one 404, not a second one for its event stream", async ({ page }) => {
+    const notFound: string[] = [];
+    page.on("response", (response) => {
+      if (response.status() === 404) notFound.push(new URL(response.url()).pathname);
+    });
+    await page.goto("/app/jobs/does-not-exist");
+    await expect(page.getByRole("heading", { level: 1, name: "Job not found" })).toBeVisible();
+    await page.waitForTimeout(500);
+    expect(notFound).toEqual(["/api/v1/jobs/does-not-exist"]);
+  });
+
+  test("focus moves to the new page after creating a job", async ({ page }) => {
+    await startJob(page);
+    await expect(page.locator("#main")).toBeFocused();
+  });
+
+  test("the job page fits a 320px phone, tabs included", async ({ page }) => {
+    await startJob(page);
+    await expect(page.getByText("Succeeded").first()).toBeVisible({ timeout: 30_000 });
+    for (const width of [390, 320]) {
+      await page.setViewportSize({ width, height: 800 });
+      await expectNoHorizontalOverflow(page);
+      const tabs = page.getByRole("tablist", { name: "Job output" });
+      // The output section renders a frame after the job loads.
+      await expect(tabs.getByRole("tab")).toHaveCount(4);
+      const box = await tabs.boundingBox();
+      expect(box && box.x + box.width).toBeLessThanOrEqual(width);
+      for (const tab of await tabs.getByRole("tab").all()) {
+        // Each label fits its segment: no ellipsis, nothing clipped.
+        const label = tab.locator(".truncate");
+        expect(
+          await label.evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
+          await tab.innerText(),
+        ).toBe(true);
+      }
+    }
+  });
+
+  test("blocked storage still follows the OS appearance", async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(window, "localStorage", {
+        get() {
+          throw new DOMException("blocked", "SecurityError");
+        },
+      });
+    });
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.goto("/app");
+    await expect(page.locator("html")).toHaveClass(/dark/);
+  });
+
+  test("the browser chrome colour follows a manual appearance switch", async ({ page }) => {
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.goto("/app");
+    const colours = () =>
+      page.evaluate(() =>
+        [...document.querySelectorAll('meta[name="theme-color"]')].map((m) => m.getAttribute("content")),
+      );
+    expect(new Set(await colours())).toEqual(new Set(["#000000"]));
+    await page.getByRole("button", { name: "Switch to light appearance" }).click();
+    expect(new Set(await colours())).toEqual(new Set(["#ffffff"]));
+  });
+});

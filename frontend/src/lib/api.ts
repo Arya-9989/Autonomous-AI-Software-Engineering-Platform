@@ -84,6 +84,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await response.json()) as T;
 }
 
+/** The filename from `Content-Disposition: attachment; filename="x.zip"` (or project.zip). */
+export function archiveName(disposition: string | null): string {
+  return /filename="([^"]+)"/.exec(disposition ?? "")?.[1] ?? "project.zip";
+}
+
 const job = (id: string) => `/api/v1/jobs/${encodeURIComponent(id)}`;
 
 export const api = {
@@ -101,14 +106,17 @@ export const api = {
   architecture: (id: string) => request<Architecture>(`${job(id)}/architecture`),
   review: (id: string) => request<Review>(`${job(id)}/review`),
 
-  async downloadArchive(id: string, filename: string): Promise<void> {
+  /** Saves the job's zip; returns the file name the server chose (same as the folder inside). */
+  async downloadArchive(id: string): Promise<string> {
     const response = await fetch(`${job(id)}/archive`, { headers: authHeaders() });
     if (!response.ok) throw await errorFrom(response);
+    const filename = archiveName(response.headers.get("content-disposition"));
     const url = URL.createObjectURL(await response.blob());
     const anchor = document.createElement("a");
     anchor.href = url;
     anchor.download = filename;
     anchor.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return filename;
   },
 };

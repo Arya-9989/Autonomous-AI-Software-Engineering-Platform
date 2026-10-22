@@ -142,7 +142,7 @@ function Review() {
   return (
     <Panel>
       <Label>Review</Label>
-      <div className="flex items-end gap-6">
+      <div className="flex flex-wrap items-end gap-x-6 gap-y-3">
         <p className="text-[64px] leading-[64px] font-semibold tracking-[-0.01em] text-ink tabular-nums">
           {review.score}
           <span className="text-[21px] leading-6 font-medium text-ink-2">/100</span>

@@ -74,11 +74,26 @@ function JobSkeleton() {
   );
 }
 
-const TABS: { id: Tab; label: string }[] = [
+interface TabLabel {
+  id: Tab;
+  label: string;
+  /** A shorter label where four equal segments cannot fit the full one (a phone's width). */
+  short?: { text: string; showShort: string; showFull: string };
+}
+
+const TABS: TabLabel[] = [
   { id: "files", label: "Files" },
-  { id: "architecture", label: "Architecture" },
+  {
+    id: "architecture",
+    label: "Architecture",
+    short: { text: "Design", showShort: "min-[360px]:hidden", showFull: "max-[359px]:hidden" },
+  },
   { id: "review", label: "Review" },
-  { id: "spec", label: "Requirements" },
+  {
+    id: "spec",
+    label: "Requirements",
+    short: { text: "Spec", showShort: "sm:hidden", showFull: "max-sm:hidden" },
+  },
 ];
 
 export function JobPage() {
@@ -135,9 +150,8 @@ export function JobPage() {
     onError: (error) => toast.error("Could not delete", { description: (error as Error).message }),
   });
   const download = useMutation({
-    mutationFn: () => api.downloadArchive(jobId, `${job.data?.project_name ?? "project"}.zip`),
-    onSuccess: () =>
-      toast.success("Download started", { description: `${job.data?.project_name ?? "project"}.zip` }),
+    mutationFn: () => api.downloadArchive(jobId),
+    onSuccess: (filename) => toast.success("Download started", { description: filename }),
     onError: (error) => toast.error("Download failed", { description: (error as Error).message }),
   });
 
@@ -304,14 +318,14 @@ export function JobPage() {
         <Tabs.Root value={tab} onValueChange={(value) => setTab(value as Tab)} className="mt-12">
           <Tabs.List
             aria-label="Job output"
-            className="no-scrollbar inline-flex max-w-full gap-0.5 overflow-x-auto rounded-full bg-ink/[0.06] p-1"
+            className="grid w-full grid-cols-4 gap-0.5 rounded-full bg-ink/[0.06] p-1 sm:inline-flex sm:w-auto"
           >
             {TABS.map((item) => (
               <Tabs.Trigger
                 key={item.id}
                 value={item.id}
                 className={cx(
-                  "relative shrink-0 rounded-full px-4 py-1.5 text-[14px] leading-5 tracking-[-0.016em] transition-colors duration-200 pointer-coarse:py-3",
+                  "relative min-w-0 shrink-0 rounded-full px-1 py-1.5 text-[13px] leading-5 tracking-[-0.016em] transition-colors duration-200 pointer-coarse:py-3 sm:px-4 sm:text-[14px]",
                   tab === item.id ? "text-ink" : "text-ink-2 hover:text-ink",
                 )}
               >
@@ -323,10 +337,19 @@ export function JobPage() {
                     aria-hidden
                   />
                 )}
-                <span className="relative">
-                  {item.label}
+                <span className="relative block truncate">
+                  {item.short ? (
+                    <>
+                      <span className={item.short.showShort}>{item.short.text}</span>
+                      <span className={item.short.showFull}>{item.label}</span>
+                    </>
+                  ) : (
+                    item.label
+                  )}
                   {item.id === "review" && data.review_score !== null && (
-                    <span className="ml-1.5 text-[12px] text-ink-2 tabular-nums">{data.review_score}</span>
+                    <span className="ml-1.5 hidden text-[12px] text-ink-2 tabular-nums sm:inline">
+                      {data.review_score}
+                    </span>
                   )}
                 </span>
               </Tabs.Trigger>

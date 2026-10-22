@@ -6,8 +6,9 @@ import { sample } from "./sample";
 export function Footer() {
   return (
     <footer className="bg-surface-2 text-[12px] leading-4 tracking-[-0.01em] text-ink-2">
-      <div className="wrap border-t border-hairline py-6">
-        <ol className="space-y-2">
+      <div className="wrap py-6">
+        {/* The rules sit on the content column, not the padded wrapper, so they align with the text. */}
+        <ol className="space-y-2 border-t border-hairline pt-6">
           <li>
             Every example on this page comes from one run of the deterministic offline provider (
             <span className="font-mono">{sample.provider.model}</span>) on the spec shown. A test in the
@@ -21,14 +22,23 @@ export function Footer() {
         </ol>
         <div className="mt-6 flex flex-col gap-3 border-t border-hairline pt-5 sm:flex-row sm:items-center">
           <p>Copyright © 2026 Arya Mahindrakar. MIT License.</p>
-          <nav aria-label="Footer" className="flex flex-wrap gap-x-5 sm:ml-auto">
-            <Link to="/app" className="inline-flex min-h-11 items-center hover:text-ink hover:underline">
+          <nav aria-label="Footer" className="-mx-1.5 flex flex-wrap gap-x-2 sm:ml-auto">
+            <Link
+              to="/app"
+              className="inline-flex min-h-11 items-center px-1.5 hover:text-ink hover:underline"
+            >
               App
             </Link>
-            <a href="/api/docs" className="inline-flex min-h-11 items-center hover:text-ink hover:underline">
+            <a
+              href="/api/docs"
+              className="inline-flex min-h-11 items-center px-1.5 hover:text-ink hover:underline"
+            >
               API docs
             </a>
-            <a href={REPO_URL} className="inline-flex min-h-11 items-center hover:text-ink hover:underline">
+            <a
+              href={REPO_URL}
+              className="inline-flex min-h-11 items-center px-1.5 hover:text-ink hover:underline"
+            >
               Source on GitHub
             </a>
           </nav>

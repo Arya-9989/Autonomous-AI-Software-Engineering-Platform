@@ -4,48 +4,9 @@ import { useEffect, useRef } from "react";
 import { Skeleton } from "../components/ui";
 import type { StreamStatus } from "../hooks/useJobEvents";
 import { cx } from "../lib/cx";
-import { formatDuration, formatTime } from "../lib/format";
+import { formatTime } from "../lib/format";
 import type { JobEvent } from "../lib/types";
-
-const LABELS: Record<string, string> = {
-  analyze: "analyst",
-  architect: "architect",
-  implement: "coder",
-  devops: "devops",
-  review: "reviewer",
-};
-
-function describe(event: JobEvent): { text: string; tone: string } {
-  switch (event.event) {
-    case "job.queued":
-      return { text: `Queued for the ${String(event.provider ?? "default")} provider`, tone: "text-ink-2" };
-    case "job.started":
-      return { text: `Worker picked up the job (${String(event.model ?? "")})`, tone: "text-ink-2" };
-    case "stage.started":
-      return { text: `${event.label} started`, tone: "text-ink" };
-    case "stage.log":
-      return { text: event.message ?? "", tone: "text-ink-2" };
-    case "stage.completed":
-      return {
-        text: `${event.summary ?? "Completed"} (${formatDuration(event.duration_s)})`,
-        tone: "text-ok",
-      };
-    case "stage.failed":
-      return { text: event.error ?? "Stage failed", tone: "text-bad" };
-    case "job.succeeded":
-      return { text: "Project ready", tone: "font-semibold text-ok" };
-    case "job.failed":
-      return { text: event.error ?? "Job failed", tone: "font-semibold text-bad" };
-    case "job.cancel_requested":
-      return { text: "Cancellation requested", tone: "text-warn" };
-    case "job.cancelled":
-      return { text: "Job cancelled", tone: "font-semibold text-warn" };
-    case "job.requeued":
-      return { text: "Worker restarted; job requeued", tone: "text-warn" };
-    default:
-      return { text: event.event, tone: "text-ink-2" };
-  }
-}
+import { describe, LABELS } from "./activity";
 
 const STREAM_LABEL: Record<StreamStatus, string> = {
   connecting: "Connecting",
@@ -102,7 +63,7 @@ export function ActivityLog({ events, status }: { events: JobEvent[]; status: St
           <ul className="space-y-3">
             <AnimatePresence initial={false}>
               {events.map((event, index) => {
-                const { text, tone } = describe(event);
+                const { text, tone } = describe(event, events[index - 1]);
                 return (
                   <m.li
                     key={event.id ?? `local-${index}`}

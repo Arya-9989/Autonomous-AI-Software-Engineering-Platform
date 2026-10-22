@@ -6,10 +6,11 @@ export function formatBytes(bytes: number): string {
 
 export function formatDuration(seconds: number | null | undefined): string {
   if (seconds === null || seconds === undefined) return "—";
-  if (seconds < 1) return `${Math.max(1, Math.round(seconds * 1000))} ms`;
-  if (seconds < 60) return `${seconds.toFixed(1)} s`;
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}m ${Math.round(seconds % 60)}s`;
+  // Thresholds sit where rounding would roll over ("1000 ms", "60.0 s", "1m 60s").
+  if (seconds < 0.9995) return `${Math.max(1, Math.round(seconds * 1000))} ms`;
+  if (seconds < 59.95) return `${seconds.toFixed(1)} s`;
+  const total = Math.round(seconds);
+  return `${Math.floor(total / 60)}m ${total % 60}s`;
 }
 
 const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
@@ -31,8 +32,9 @@ export function formatRelative(iso: string, now: number = Date.now()): string {
 }
 
 export function formatTime(iso: string | undefined): string {
-  if (!iso) return "";
-  return new Date(iso).toLocaleTimeString([], {
+  const date = iso ? new Date(iso) : null;
+  if (!date || Number.isNaN(date.getTime())) return ""; // never print "Invalid Date"
+  return date.toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",

@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { BookOpen, KeyRound, Menu, Moon, Plus, Search, Sun, X } from "lucide-react";
 import { LazyMotion, MotionConfig } from "motion/react";
 import { Dialog } from "radix-ui";
-import { lazy, Suspense, useEffect, useState, useSyncExternalStore } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Link, Route, Routes, useLocation } from "react-router";
 
 import { Logo } from "../components/Logo";
@@ -86,6 +86,16 @@ export default function AppShell({ notFound = false }: { notFound?: boolean }) {
   }, []);
 
   const isMac = useSyncExternalStore(noSubscription, detectMac, () => false);
+
+  // After an in-app navigation, move focus to the new page (not on first load), so keyboard and
+  // screen-reader users start at its content instead of wherever the old page left them.
+  const shownPath = useRef(location.pathname);
+  useEffect(() => {
+    if (shownPath.current === location.pathname) return;
+    shownPath.current = location.pathname;
+    document.getElementById("main")?.focus({ preventScroll: true });
+    window.scrollTo(0, 0);
+  }, [location.pathname]);
 
   return (
     <LazyMotion features={loadMotionFeatures} strict>

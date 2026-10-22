@@ -110,13 +110,25 @@ export function NewJobPage() {
               aria-label="Provider"
               className="inline-flex rounded-full bg-ink/[0.06] p-0.5"
             >
-              {providers.map((p) => (
+              {providers.map((p, index) => (
                 <button
                   key={p.name}
                   type="button"
                   role="radio"
                   aria-checked={selected === p.name}
+                  // One tab stop for the group; arrow keys move and select (WAI-ARIA radio group).
+                  tabIndex={selected === p.name ? 0 : -1}
                   onClick={() => setProvider(p.name)}
+                  onKeyDown={(event) => {
+                    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
+                    if (!step) return;
+                    event.preventDefault();
+                    const next = (index + step + providers.length) % providers.length;
+                    setProvider(providers[next]!.name);
+                    const radios =
+                      event.currentTarget.parentElement?.querySelectorAll<HTMLElement>('[role="radio"]');
+                    radios?.[next]?.focus();
+                  }}
                   className={cx(
                     "rounded-full px-3.5 py-1.5 text-[12px] leading-4 font-medium transition-colors duration-200 pointer-coarse:py-3",
                     selected === p.name ? "bg-surface text-ink shadow-sm" : "text-ink-2 hover:text-ink",

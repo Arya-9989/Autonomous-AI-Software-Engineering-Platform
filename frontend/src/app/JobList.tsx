@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { FolderGit2 } from "lucide-react";
+import { FolderGit2, RotateCw } from "lucide-react";
 import { NavLink } from "react-router";
 
 import { Skeleton } from "../components/ui";
@@ -32,9 +32,20 @@ export function JobList() {
   if (jobs.isError) {
     const unauthorised = jobs.error instanceof ApiError && jobs.error.status === 401;
     return (
-      <p className="px-3 py-2 text-[12px] leading-4 text-ink-2">
-        {unauthorised ? "Add your API key to see your jobs." : "Could not load jobs."}
-      </p>
+      <div className="px-3 py-2 text-[12px] leading-4 text-ink-2" role="status">
+        <p>
+          {unauthorised ? "Add your API key (the key icon above) to see your jobs." : "Could not load jobs."}
+        </p>
+        {!unauthorised && (
+          <button
+            type="button"
+            onClick={() => void jobs.refetch()}
+            className="mt-1 inline-flex min-h-11 items-center gap-1.5 font-medium text-accent-ink hover:underline"
+          >
+            <RotateCw className="size-3.5" aria-hidden /> Try again
+          </button>
+        )}
+      </div>
     );
   }
   if (jobs.data.items.length === 0) {

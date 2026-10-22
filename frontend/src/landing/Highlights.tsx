@@ -304,7 +304,7 @@ export function Highlights() {
                 aria-label={`Show highlight ${i + 1}`}
                 aria-current={index === i ? "true" : undefined}
                 onClick={() => go(i)}
-                className="grid h-11 place-items-center px-1.5"
+                className="grid h-11 min-w-6 place-items-center px-2"
               >
                 <span
                   className={cx(

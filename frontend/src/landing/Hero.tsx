@@ -135,7 +135,7 @@ function HeroPanel() {
           type="button"
           onClick={replay}
           disabled={!done}
-          className="hit-44 inline-flex items-center gap-1 rounded-full text-accent-ink hover:underline disabled:opacity-0"
+          className="hit-44 inline-flex min-h-6 items-center gap-1 rounded-full px-1 text-accent-ink hover:underline disabled:opacity-0"
         >
           <RotateCcw className="size-3" aria-hidden /> Replay
         </button>
