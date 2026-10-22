@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from alembic import context
+from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
 from autoswe.db import create_engine
@@ -45,10 +46,26 @@ def _do_run(connection: Connection) -> None:
         context.run_migrations()
 
 
+# Arbitrary constant: serialises concurrent `upgrade` calls when several replicas start at once.
+_MIGRATION_LOCK_ID = 7_274_812
+
+
 async def run_migrations_online() -> None:
     engine = create_engine(_url())
     async with engine.connect() as connection:
-        await connection.run_sync(_do_run)
+        if connection.dialect.name == "postgresql":
+            await connection.execute(
+                text("SELECT pg_advisory_lock(:id)"), {"id": _MIGRATION_LOCK_ID}
+            )
+            await connection.commit()
+        try:
+            await connection.run_sync(_do_run)
+        finally:
+            if connection.dialect.name == "postgresql":
+                await connection.execute(
+                    text("SELECT pg_advisory_unlock(:id)"), {"id": _MIGRATION_LOCK_ID}
+                )
+                await connection.commit()
     await engine.dispose()
 
 
