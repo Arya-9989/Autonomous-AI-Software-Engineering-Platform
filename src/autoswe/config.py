@@ -5,6 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -141,9 +142,24 @@ class Settings(SandboxSettings):
     job_token_reservation: int = Field(default=200_000, ge=1_000)
     pricing_file: Path | None = None
 
+    # --- publishing to GitHub ------------------------------------------------------------------
+    # Off unless a token is set. A fine-grained token (or GitHub App installation token) needs:
+    # Administration + Repository creation (write), Contents (write), Workflows (write, every
+    # project has a CI workflow) and Pull requests (write). Never logged or stored.
+    github_publish_token: SecretStr | None = None
+    # Organisation to create repositories in; empty = the token's own account.
+    github_publish_owner: str | None = Field(
+        default=None, pattern=r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$"
+    )
+    github_api_url: str = "https://api.github.com"
+    # Plain http is refused (the token would travel in clear) except for loopback hosts, or
+    # when this is set for a fake API on a private network.
+    github_api_insecure_http: bool = False
+    github_timeout_s: float = Field(default=30.0, gt=0, le=300)
+
     @field_validator(
         "anthropic_effort", "anthropic_api_key", "static_dir", "token_budget_default",
-        "pricing_file", mode="before",
+        "pricing_file", "github_publish_token", "github_publish_owner", mode="before",
     )  # fmt: skip
     @classmethod
     def _blank_is_unset(cls, value: object) -> object:
@@ -172,6 +188,24 @@ class Settings(SandboxSettings):
     def _check_budgets(self) -> Settings:
         self.parsed_token_budgets()
         return self
+
+    @model_validator(mode="after")
+    def _check_github(self) -> Settings:
+        url = urlsplit(self.github_api_url)
+        loopback = url.hostname in {"localhost", "127.0.0.1", "::1"}
+        if url.scheme == "http" and not (loopback or self.github_api_insecure_http):
+            raise ValueError(
+                "GITHUB_API_URL must use https (http is allowed for loopback hosts, or with "
+                "GITHUB_API_INSECURE_HTTP=true for a fake API on a private network)."
+            )
+        if url.scheme not in {"http", "https"} or not url.hostname:
+            raise ValueError("GITHUB_API_URL must be an absolute http(s) URL.")
+        return self
+
+    @property
+    def github_publishing_enabled(self) -> bool:
+        token = self.github_publish_token
+        return token is not None and bool(token.get_secret_value())
 
     def parsed_token_budgets(self) -> dict[str, int]:
         """``{principal: tokens per period}`` parsed from ``TOKEN_BUDGETS``."""

@@ -329,3 +329,21 @@ async def test_failed_calls_record_their_attempts() -> None:
     assert call.status.status_code is StatusCode.ERROR
     assert _attrs(call)["error.type"] == "LLMConfigurationError"
     assert _attrs(call)["autoswe.llm.http_attempts"] == 1
+
+
+def test_configure_tracing_installs_one_provider_per_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autoswe import tracing
+
+    installed: list[Any] = []
+    monkeypatch.setattr(tracing, "_installed", None)
+    monkeypatch.setattr(trace, "set_tracer_provider", installed.append)
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    monkeypatch.delenv("OTEL_TRACES_EXPORTER", raising=False)
+    assert tracing.configure_tracing() is None and installed == []
+    monkeypatch.setenv("OTEL_TRACES_EXPORTER", "console")
+    provider = tracing.configure_tracing("autoswe-test")
+    assert provider is not None and installed == [provider]
+    assert tracing.configure_tracing("again") is provider and len(installed) == 1
+    provider.shutdown()

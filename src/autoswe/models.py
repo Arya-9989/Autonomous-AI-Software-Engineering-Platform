@@ -126,6 +126,8 @@ class Job(Base):
     # The submitting request's ID and W3C trace context: the worker's job span continues it.
     request_id: Mapped[str | None] = mapped_column(String(64))
     trace_context: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    # Where the project was published (repository, PR); {"status": "publishing"} while it runs.
+    publication: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     worker_id: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)

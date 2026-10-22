@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -176,6 +176,9 @@ class JobDetail(JobSummary):
         default=None, description="Sandboxed test run; null when tests were not executed"
     )
     review_score: int | None
+    publication: dict[str, Any] | None = Field(
+        default=None, description="Where the project was published on GitHub"
+    )
 
     @classmethod
     def from_model(cls, job: Job) -> JobDetail:
@@ -208,6 +211,7 @@ class JobDetail(JobSummary):
             validation=validation,
             tests=TestsSummary.from_report(job.test_report) if job.test_report else None,
             review_score=(job.review or {}).get("score"),
+            publication=job.publication,
         )
 
 
@@ -297,3 +301,26 @@ class PricingOut(BaseModel):
     currency: str
     unit: str
     models: dict[str, dict[str, float]]
+
+
+class PublishRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    repository: str = Field(
+        min_length=1, max_length=100, description="Name of the new repository to create"
+    )
+    visibility: Literal["private", "public"] = "private"
+    description: str | None = Field(default=None, max_length=350)
+
+
+class PublicationOut(BaseModel):
+    status: str
+    repository: str
+    html_url: str
+    pull_request_url: str
+    pull_request_number: int
+    branch: str
+    base_branch: str
+    commit_sha: str
+    visibility: str
+    published_at: str

@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Annotated
 
+import httpx2
 from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,6 +31,8 @@ class Services:
     worker: Worker | None
     budget: BudgetPolicy
     pricing: PricingTable
+    # Tests point publishing at a fake GitHub API through this; None = the real network.
+    github_transport: httpx2.AsyncBaseTransport | None = None
 
 
 def get_services(request: Request) -> Services:

@@ -87,6 +87,10 @@ Animated WebP (479 KB), with a shorter GIF for clients that cannot show WebP.</s
   with `Last-Event-ID`.
 - **Outputs**: a downloadable zip (deterministic archive), a file browser, `ARCHITECTURE.md` with a
   Mermaid diagram and ADRs, and machine-readable `docs/architecture.json`.
+- **Publish to GitHub** ([ADR 0005](docs/adr/0005-publish-to-github.md)): `POST
+  /api/v1/jobs/{id}/publish` creates a new repository (private by default) in the operator's
+  account or organisation, commits the project on an `autoswe/<job>` branch and opens a pull
+  request. It never writes to an existing repository; the token is never logged or stored.
 - **Observability**: Prometheus `/metrics` (HTTP latency by route template, jobs, stage durations,
   LLM tokens and cost, budget rejections, validation issues), structured JSON logs carrying
   `request_id`, `job_id`, `trace_id` and `span_id`, `/healthz` and `/readyz` probes, and
@@ -336,6 +340,9 @@ All settings are environment variables (a `.env` file is read if present).
 | `TOKEN_BUDGET_PERIOD` | `month` | `month`, `day` (UTC) or `total` |
 | `JOB_TOKEN_RESERVATION` | `200000` | Tokens reserved at submission and per top-up while a job runs |
 | `PRICING_FILE` | built-in | A replacement for `src/autoswe/pricing.toml` (USD per million tokens) |
+| `GITHUB_PUBLISH_TOKEN` | (empty = off) | Token for publishing: fine-grained with Administration + Repository creation, Contents, Workflows and Pull requests (write) |
+| `GITHUB_PUBLISH_OWNER` | (empty) | Organisation to create repositories in; empty = the token's account |
+| `GITHUB_API_URL` | `https://api.github.com` | GitHub API (GitHub Enterprise, or the test fake); https only except loopback |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | (empty) | Turns on OTLP/HTTP trace export; the other standard `OTEL_*` variables apply |
 
 ## API
@@ -358,6 +365,7 @@ Authenticate with `Authorization: Bearer <key>` or `X-API-Key: <key>`. Interacti
 | `GET` | `/api/v1/jobs/{id}/archive` | The generated project as a `.zip` |
 | `POST` | `/api/v1/jobs/{id}/cancel` | Cancel a queued or running job |
 | `DELETE` | `/api/v1/jobs/{id}` | Delete a finished job |
+| `POST` | `/api/v1/jobs/{id}/publish` | `{repository, visibility?, description?}`: new GitHub repository plus a pull request; `201`, `409` (name taken or already published), `503` (not configured or rate-limited) |
 | `GET` | `/api/v1/usage` | Your budget for the current period (limit, used, reserved, remaining, reset time) and token and cost totals |
 | `GET` | `/api/v1/pricing` | The pricing table costs are computed from |
 | `GET` | `/api/v1/info` | Public: version, whether auth is required, providers |
@@ -425,6 +433,22 @@ and 5-minute cache writes, taken from Anthropic's claude-api skill model table (
 2026-10-06) and its prompt-caching multipliers. A model missing from the table is counted but not
 priced, and its costs are reported as incomplete rather than estimated. `autoswe usage` prints
 the ledger for every principal.
+
+## Publishing to GitHub
+
+```bash
+GITHUB_PUBLISH_TOKEN=github_pat_... uv run autoswe serve
+curl -X POST localhost:8000/api/v1/jobs/<id>/publish -H 'Content-Type: application/json'   -d '{"repository": "library-api", "visibility": "private"}'
+```
+
+The answer has the repository, the branch, the commit and the pull request URL, which the job
+detail also shows under `publication`. To try it without touching github.com, run the fake API the
+tests use and point the server at it:
+
+```bash
+uv run python -m tests.fake_github --port 5366 --token fake-token-0123456789 &
+GITHUB_PUBLISH_TOKEN=fake-token-0123456789 GITHUB_API_URL=http://127.0.0.1:5366 uv run autoswe serve
+```
 
 ## What a generated project contains
 
@@ -625,7 +649,6 @@ tests/                          # pytest suite
 
 - Relationships between entities and Alembic migrations in generated projects.
 - More target stacks (TypeScript/Node, Go) with matching validators.
-- Push generated projects to a new GitHub repository and open a PR.
 - A separate worker Deployment with KEDA autoscaling on queue depth.
 
 ## License

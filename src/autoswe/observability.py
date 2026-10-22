@@ -79,6 +79,12 @@ BUDGET_REJECTIONS = Counter(
     ["where"],
     registry=REGISTRY,
 )
+GITHUB_PUBLISH = Counter(
+    "autoswe_github_publish_total",
+    "Attempts to publish a generated project to GitHub, by outcome",
+    ["outcome"],
+    registry=REGISTRY,
+)
 VALIDATION_ISSUES = Counter(
     "autoswe_validation_issues_total",
     "Issues found by deterministic validation of generated projects",

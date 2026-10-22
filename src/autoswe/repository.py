@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy import and_, delete, func, null, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from autoswe.budget import UsageRepository
@@ -162,6 +162,28 @@ class JobRepository:
         await self.session.commit()
         status = await self.status_of(job_id)
         return "cancel_requested" if status is JobStatus.RUNNING else None
+
+    async def claim_publication(self, job_id: str) -> bool:
+        """Mark a job as being published; only one request can win (compare-and-set)."""
+        result = await self.session.execute(
+            update(Job)
+            .where(Job.id == job_id, Job.status == JobStatus.SUCCEEDED, Job.publication.is_(None))
+            .values(publication={"status": "publishing"}, updated_at=utcnow())
+            .execution_options(synchronize_session=False)
+        )
+        await self.session.commit()
+        return _rowcount(result) == 1
+
+    async def record_publication(
+        self, job_id: str, publication: dict[str, Any] | None, event: str, payload: dict[str, Any]
+    ) -> None:
+        # SQL NULL, not JSON null, so claim_publication's "IS NULL" can match again.
+        value = publication if publication is not None else null()
+        await self.session.execute(
+            update(Job).where(Job.id == job_id).values(publication=value, updated_at=utcnow())
+        )
+        self.session.add(JobEvent(job_id=job_id, type=event, payload=payload))
+        await self.session.commit()
 
     async def delete(self, job: Job) -> None:
         await self.session.delete(job)

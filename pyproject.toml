@@ -97,9 +97,13 @@ filterwarnings = ["error::DeprecationWarning:autoswe.*"]
 
 [tool.coverage.run]
 source = ["autoswe"]
+# SQLAlchemy's asyncio layer runs database calls in greenlets; without this, code after an
+# awaited query is not seen and is reported as uncovered.
+concurrency = ["thread", "greenlet"]
 
 [tool.coverage.report]
-# Measured at 93.45% when this gate was added (92.8% before the roadmap's wave 1).
-fail_under = 93
+# main measured 95.17% with greenlet tracking (92.8% without it, which missed code after
+# awaited queries); this branch measures 95.9%. The gate sits above main's level.
+fail_under = 95.5
 show_missing = true
 skip_covered = true

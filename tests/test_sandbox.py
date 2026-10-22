@@ -434,3 +434,93 @@ async def test_local_backend_memory_rlimit_on_posix() -> None:
     assert result.status is SandboxStatus.FAILED
     assert result.tests is not None
     assert "MemoryError" in result.tests.failures[0].message
+
+
+# --- the entry script run in-process on a real workspace -----------------------------------------
+
+
+def _write(workspace: Path, files: list[GeneratedFile]) -> None:
+    for file in files:
+        target = workspace / file.path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(file.content, encoding="utf-8", newline="\n")
+
+
+def _entry(workspace: Path, capsys: pytest.CaptureFixture[str], *extra: str) -> dict[str, Any]:
+    entry.main(["--workspace", str(workspace), *extra])
+    result = parse_entry_output(capsys.readouterr().out)
+    assert result is not None
+    return result
+
+
+def test_entry_runs_lint_tests_and_types_and_reports_a_verdict(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write(tmp_path, projects.passing())
+    result = _entry(tmp_path, capsys, "--deadline-s", "90")
+    assert result["status"] == "passed"
+    assert result["lint"]["status"] == "passed"
+    assert result["typecheck"]["status"] == "passed"
+    assert result["tests"]["collected"] == 2 and result["tests"]["passed"] == 2
+    assert result["tests"]["exit_code"] == 0
+
+
+def test_entry_reports_failures_and_missing_tests(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    failing = tmp_path / "failing"
+    _write(failing, projects.failing())
+    result = _entry(failing, capsys, "--no-typecheck")
+    assert result["status"] == "failed" and result["tests"]["failed"] == 2
+    assert result["message"] == "pytest exited with 1"
+    empty = tmp_path / "empty"
+    _write(empty, projects.project("x = 1\n"))
+    assert _entry(empty, capsys, "--no-typecheck")["status"] == "no_tests"
+
+
+def test_entry_kills_a_step_that_outlives_the_deadline(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write(tmp_path, projects.project(projects.INFINITE_LOOP))
+    result = _entry(tmp_path, capsys, "--deadline-s", "6")
+    assert result["status"] == "timeout"
+    assert result["tests"]["exit_code"] is None
+    assert "typecheck" not in result  # no time left for further steps
+
+
+def test_entry_reads_cgroup_counters_where_they_exist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    counters = iter([{"oom_kill": 0, "pids_max": 0}, {"oom_kill": 1, "pids_max": 0}])
+    monkeypatch.setattr(entry, "_cgroup_events", lambda: next(counters))
+    _write(tmp_path, projects.passing())
+    result = _entry(tmp_path, capsys, "--no-typecheck", "--cgroup-events")
+    assert (result["status"], result["limit"]) == ("resource_limit", "memory")
+    pids = iter([{"pids_max": 0}, {"pids_max": 3}])
+    monkeypatch.setattr(entry, "_cgroup_events", lambda: next(pids))
+    result = _entry(tmp_path, capsys, "--no-typecheck", "--cgroup-events")
+    assert (result["status"], result["limit"]) == ("resource_limit", "pids")
+    monkeypatch.undo()
+    assert isinstance(entry._cgroup_events(), dict)  # absent files on non-Linux hosts: {}
+
+
+async def test_runner_with_docker_reports_readiness_and_cleans_up_at_start(
+    fake_docker: Any,
+) -> None:
+    import httpx2
+
+    from autoswe.sandbox.service import RunnerSettings, create_runner_app
+
+    settings = RunnerSettings(_env_file=None, sandbox_runner_token="t" * 20,
+                              log_format="console", log_level="WARNING")  # fmt: skip
+    sandbox, log = fake_docker("ok")
+    app = create_runner_app(settings, sandbox=sandbox)
+    async with app.router.lifespan_context(app):  # removes the pool's leftover containers
+        assert ["rm", "-f", "leftover1", "leftover2"] in _calls(log)
+        transport = httpx2.ASGITransport(app=app)
+        async with httpx2.AsyncClient(transport=transport, base_url="http://r") as client:
+            assert (await client.get("/readyz")).json() == {"status": "ok", "backend": "docker"}
+            os.environ["FAKE_DOCKER_MODE"] = "no-image"
+            not_ready = await client.get("/readyz")
+    assert not_ready.status_code == 503
+    assert "not available" in not_ready.json()["detail"]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import time
 from collections.abc import AsyncIterator
@@ -19,15 +20,23 @@ from autoswe.llm.base import is_metered
 from autoswe.llm.registry import UnknownProviderError
 from autoswe.logging_config import request_id_var
 from autoswe.models import Job, JobStatus
-from autoswe.observability import BUDGET_REJECTIONS, JOBS_SUBMITTED
+from autoswe.observability import BUDGET_REJECTIONS, GITHUB_PUBLISH, JOBS_SUBMITTED
 from autoswe.pipeline.artifacts import (
     ArchitectureSpec,
+    GeneratedFile,
     Requirements,
     ReviewReport,
     ValidationReport,
 )
 from autoswe.pipeline.naming import kebab
 from autoswe.pipeline.packaging import build_zip
+from autoswe.publishing import (
+    GitHubClient,
+    PublishError,
+    publish_project,
+    pull_request_body,
+    repository_name_problem,
+)
 from autoswe.repository import BudgetRefusedError, JobRepository, Reservation
 from autoswe.schemas import (
     FileContent,
@@ -36,11 +45,14 @@ from autoswe.schemas import (
     JobDetail,
     JobPage,
     JobSummary,
+    PublicationOut,
+    PublishRequest,
     language_for,
 )
-from autoswe.tracing import current_context_carrier
+from autoswe.tracing import current_context_carrier, mark_error, tracer
 
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
+logger = logging.getLogger(__name__)
 
 SSE_KEEPALIVE_S = 15.0
 SSE_POLL_S = 1.0
@@ -204,6 +216,89 @@ async def get_test_report(job_id: str, principal: PrincipalDep, repo: Repository
     if job.test_report is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Tests were not run for this job")
     return job.test_report
+
+
+@router.post(
+    "/{job_id}/publish",
+    status_code=status.HTTP_201_CREATED,
+    response_model=PublicationOut,
+    responses={409: {"description": "Not succeeded, already published, or the name is taken"},
+               503: {"description": "Publishing is not configured, or GitHub rate-limited us"}},
+)  # fmt: skip
+async def publish_job(
+    job_id: str,
+    payload: PublishRequest,
+    principal: PrincipalDep,
+    repo: RepositoryDep,
+    services: ServicesDep,
+) -> Any:
+    """Create a new GitHub repository, commit the project on a branch and open a pull request.
+
+    Uses the server's publishing token (``GITHUB_PUBLISH_TOKEN``); the caller chooses only the
+    new repository's name, visibility and description. A job is published at most once."""
+    job = await _owned_job(repo, job_id, principal.name)
+    settings = services.settings
+    if not settings.github_publishing_enabled:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Publishing to GitHub is not configured (GITHUB_PUBLISH_TOKEN).",
+        )
+    problem = repository_name_problem(payload.repository)
+    if problem:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"Invalid repository name: {problem}"
+        )
+    if job.status is not JobStatus.SUCCEEDED:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Only a succeeded job is published")
+    if not await repo.claim_publication(job_id):
+        current = (await repo.get(job_id)) or job
+        where = (current.publication or {}).get("pull_request_url") or "in progress"
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=f"Job already published ({where})")
+    files = [GeneratedFile(path=f.path, content=f.content) for f in await repo.list_files(job_id)]
+    assert settings.github_publish_token is not None
+    with tracer().start_as_current_span(
+        "autoswe.github.publish",
+        attributes={"autoswe.job.id": job_id, "autoswe.github.repository": payload.repository,
+                    "autoswe.github.visibility": payload.visibility, "autoswe.files": len(files)},
+    ) as span:  # fmt: skip
+        try:
+            async with GitHubClient(
+                settings.github_publish_token.get_secret_value(),
+                api_url=settings.github_api_url,
+                timeout_s=settings.github_timeout_s,
+                transport=services.github_transport,
+            ) as client:
+                publication = await publish_project(
+                    client,
+                    owner=settings.github_publish_owner,
+                    name=payload.repository,
+                    visibility=payload.visibility,
+                    description=payload.description or job.title,
+                    files=files,
+                    branch=f"autoswe/{job_id[:8]}",
+                    title=f"AutoSWE: {job.title}",
+                    body=pull_request_body(job, len(files)),
+                )
+        except PublishError as exc:
+            GITHUB_PUBLISH.labels(exc.code).inc()
+            mark_error(span, exc, exc.code)
+            message = str(exc)
+            # A taken name or a failure before the repository existed can be retried later.
+            created = "was created" in message
+            failed = {"status": "failed", "error": message, "code": exc.code} if created else None
+            await repo.record_publication(
+                job_id, failed, "job.publish_failed", {"error": message, "code": exc.code}
+            )
+            logger.warning("publish failed", extra={"code": exc.code, "error": message})
+            headers = {"Retry-After": exc.retry_after} if exc.retry_after else None
+            raise HTTPException(exc.status_code, detail=message, headers=headers) from None
+    GITHUB_PUBLISH.labels("published").inc()
+    result = publication.as_dict()
+    await repo.record_publication(job_id, result, "job.published", {
+        "repository": publication.repository, "pull_request_url": publication.pull_request_url,
+    })  # fmt: skip
+    span.set_attribute("autoswe.github.pull_request", publication.pull_request_url)
+    return result
 
 
 @router.get("/{job_id}/files", response_model=list[FileEntry])
