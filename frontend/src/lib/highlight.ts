@@ -1,51 +1,43 @@
-import type { HighlighterCore } from "shiki/core";
+/**
+ * Highlight code to HTML in a Web Worker (highlight.worker.ts), so tokenising a large file never
+ * blocks the page. Callers keep showing the plain text until the promise resolves, and keep it
+ * if it rejects.
+ */
 
-const LANGS: Record<string, () => Promise<unknown>> = {
-  python: () => import("@shikijs/langs/python"),
-  toml: () => import("@shikijs/langs/toml"),
-  yaml: () => import("@shikijs/langs/yaml"),
-  json: () => import("@shikijs/langs/json"),
-  markdown: () => import("@shikijs/langs/markdown"),
-  hcl: () => import("@shikijs/langs/hcl"),
-  docker: () => import("@shikijs/langs/docker"),
-  bash: () => import("@shikijs/langs/bash"),
-  ini: () => import("@shikijs/langs/ini"),
-};
-
-let highlighter: Promise<HighlighterCore> | null = null;
-const loaded = new Set<string>();
-
-function getHighlighter(): Promise<HighlighterCore> {
-  highlighter ??= (async () => {
-    const [{ createHighlighterCore }, { createJavaScriptRegexEngine }] = await Promise.all([
-      import("shiki/core"),
-      import("shiki/engine/javascript"),
-    ]);
-    return createHighlighterCore({
-      themes: [import("@shikijs/themes/github-light-default"), import("@shikijs/themes/github-dark-default")],
-      langs: [],
-      engine: createJavaScriptRegexEngine(),
-    });
-  })();
-  return highlighter;
+interface Reply {
+  id: number;
+  html?: string;
+  error?: string;
 }
 
-/** Highlight code to HTML; unknown languages render as escaped plain text. */
-export async function highlight(code: string, language: string): Promise<string> {
-  const instance = await getHighlighter();
-  const loader = LANGS[language];
-  let lang = "text";
-  if (loader) {
-    if (!loaded.has(language)) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await instance.loadLanguage((await loader()) as any);
-      loaded.add(language);
-    }
-    lang = language;
-  }
-  return instance.codeToHtml(code, {
-    lang,
-    themes: { light: "github-light-default", dark: "github-dark-default" },
-    defaultColor: "light",
+let worker: Worker | null = null;
+let nextId = 0;
+const pending = new Map<number, { resolve: (html: string) => void; reject: (error: Error) => void }>();
+
+function getWorker(): Worker {
+  if (worker) return worker;
+  worker = new Worker(new URL("./highlight.worker.ts", import.meta.url), { type: "module" });
+  worker.addEventListener("message", (event: MessageEvent<Reply>) => {
+    const { id, html, error } = event.data;
+    const request = pending.get(id);
+    pending.delete(id);
+    if (!request) return;
+    if (html === undefined) request.reject(new Error(error ?? "highlighting failed"));
+    else request.resolve(html);
+  });
+  worker.addEventListener("error", () => {
+    // A broken worker fails every outstanding and future request; text stays plain.
+    for (const request of pending.values()) request.reject(new Error("highlighter unavailable"));
+    pending.clear();
+  });
+  return worker;
+}
+
+export function highlight(code: string, language: string): Promise<string> {
+  if (typeof Worker === "undefined") return Promise.reject(new Error("no Web Worker support"));
+  return new Promise((resolve, reject) => {
+    const id = nextId++;
+    pending.set(id, { resolve, reject });
+    getWorker().postMessage({ id, code, language });
   });
 }
