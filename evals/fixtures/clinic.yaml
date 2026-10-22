@@ -1,0 +1,16 @@
+name: clinic
+description: >-
+  A known hard case for the offline heuristics: "book" is a verb here, and appointments and
+  vets are only implied. Kept in the suite so the gate tracks it instead of hiding it.
+spec: >-
+  A booking API for a veterinary clinic: owners register pets and book appointments with vets.
+expected:
+  entities: [Owner, Pet, Appointment, Vet]
+  spurious_entities: [Book]
+  endpoints:
+    - GET /owners
+    - POST /pets
+    - POST /appointments
+    - GET /appointments/{appointment_id}
+    - GET /vets
+  min_tests: 5

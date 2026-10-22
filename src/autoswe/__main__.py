@@ -17,6 +17,8 @@ from typing import Any
 import uvicorn
 
 from autoswe.config import Settings, get_settings
+from autoswe.evals.cli import add_arguments as add_eval_arguments
+from autoswe.evals.cli import main as eval_main
 from autoswe.logging_config import configure_logging
 from autoswe.migrations.runner import upgrade_to_head
 
@@ -24,7 +26,13 @@ from autoswe.migrations.runner import upgrade_to_head
 async def _generate(spec: str, out: Path, provider_name: str | None, sandbox: str | None) -> int:
     # Imported lazily so `serve` does not pay for it.
     from autoswe.llm.registry import build_registry  # noqa: PLC0415
-    from autoswe.pipeline.agents import PipelineState, default_agents  # noqa: PLC0415
+    from autoswe.pipeline.agents import (  # noqa: PLC0415
+        Agent,
+        PipelineState,
+        StageResult,
+        default_agents,
+        run_pipeline,
+    )
     from autoswe.sandbox.factory import build_sandbox  # noqa: PLC0415
 
     # Local, one-shot run: API authentication does not apply.
@@ -39,13 +47,19 @@ async def _generate(spec: str, out: Path, provider_name: str | None, sandbox: st
         max_test_repair_rounds=settings.sandbox_max_repair_rounds,
     )
 
+    agents = default_agents()
+    print(f"[{agents[0].stage.value}]", file=sys.stderr)  # noqa: T201
+
     async def emit(message: str) -> None:
         print(f"    {message}", file=sys.stderr)  # noqa: T201
 
-    for agent in default_agents():
-        print(f"[{agent.stage.value}]", file=sys.stderr)  # noqa: T201
-        result = await agent.run(state, llm, emit)
+    async def on_stage(agent: Agent, result: StageResult) -> None:
         print(f"    -> {result.summary}", file=sys.stderr)  # noqa: T201
+        position = agents.index(agent)
+        if position + 1 < len(agents):
+            print(f"[{agents[position + 1].stage.value}]", file=sys.stderr)  # noqa: T201
+
+    await run_pipeline(state, llm, emit, agents=agents, on_stage=on_stage)
 
     for file in state.files.values():
         target = out / file.path
@@ -75,7 +89,13 @@ def main(argv: list[str] | None = None) -> None:
         help="Run the generated tests (default: SANDBOX_BACKEND, which defaults to none)",
     )
     sub.add_parser("sandbox-runner", help="Run the sandbox runner service (needs Docker access)")
+    evaluate = sub.add_parser("eval", help="Run or record the eval suite (fixtures in evals/)")
+    add_eval_arguments(evaluate)
     args = parser.parse_args(argv)
+
+    if args.command == "eval":
+        configure_logging("WARNING", "console")
+        sys.exit(asyncio.run(eval_main(args)))
 
     if args.command == "sandbox-runner":
         from autoswe.sandbox.service import serve as serve_runner  # noqa: PLC0415

@@ -348,7 +348,8 @@ def _posix_limits(memory_mb: int, cpu_s: int) -> Any:
         if sys.platform != "win32":
             import resource  # noqa: PLC0415 - POSIX only
 
-            address_space = memory_mb * 2 * 1024 * 1024  # virtual size: generous vs. resident
+            # Virtual size, not resident memory: interpreters reserve far more than they touch.
+            address_space = memory_mb * 4 * 1024 * 1024
             resource.setrlimit(resource.RLIMIT_AS, (address_space, address_space))
             resource.setrlimit(resource.RLIMIT_CPU, (cpu_s, cpu_s))
 

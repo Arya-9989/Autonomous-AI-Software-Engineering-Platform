@@ -1,0 +1,17 @@
+# Suite-level minimums for `autoswe eval run`. CI fails when a mean drops below its minimum, or
+# when a listed metric was not measured (sandbox metrics need --sandbox docker or local).
+# The values are the measured baseline of the offline pipeline on evals/fixtures; raise them
+# when the pipeline improves, never lower them to let a regression through. Not gated:
+# no_spurious_entities (0.0 today: the clinic fixture's known "Book" misreading).
+metrics:
+  completed: 1.0
+  validation_passed: 1.0
+  tests_passed: 1.0
+  test_pass_rate: 1.0
+  lint_clean: 1.0
+  typecheck_clean: 1.0
+  endpoint_recall: 0.9
+  design_coverage: 1.0
+  entity_recall: 0.916
+  field_recall: 1.0
+  review_score: 1.0

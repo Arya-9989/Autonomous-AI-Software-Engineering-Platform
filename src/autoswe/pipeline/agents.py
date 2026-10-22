@@ -466,3 +466,21 @@ def _describe(report: ValidationReport) -> str:
 
 def default_agents() -> list[Agent]:
     return [RequirementsAnalyst(), Architect(), CodeGenerator(), DevOpsEngineer(), Reviewer()]
+
+
+async def run_pipeline(
+    state: PipelineState,
+    llm: LLMProvider,
+    emit: Emit,
+    *,
+    agents: list[Agent] | None = None,
+    on_stage: Callable[[Agent, StageResult], Awaitable[None]] | None = None,
+) -> list[StageResult]:
+    """Run every agent in order without persistence (CLI, eval harness)."""
+    results = []
+    for agent in agents if agents is not None else default_agents():
+        result = await agent.run(state, llm, emit)
+        results.append(result)
+        if on_stage is not None:
+            await on_stage(agent, result)
+    return results

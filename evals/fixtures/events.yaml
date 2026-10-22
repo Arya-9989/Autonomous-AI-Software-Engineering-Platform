@@ -1,0 +1,12 @@
+name: events
+description: Four actors and objects in prose; ticket sales imply an Event and a Ticket.
+spec: An events platform where organizers publish events and attendees buy tickets.
+expected:
+  entities: [Organizer, Event, Attendee, Ticket]
+  endpoints:
+    - GET /events
+    - POST /events
+    - GET /events/{event_id}
+    - POST /tickets
+    - GET /attendees/{attendee_id}
+  min_tests: 10

@@ -1,0 +1,510 @@
+{
+ "format_version": 1,
+ "fixture": "inventory",
+ "source": "offline-provider",
+ "provenance": "Synthesized by AutoSWE's deterministic offline provider (heuristics and templates). This is NOT output from Claude or any other model; it exercises the harness and pins the offline pipeline's behaviour. Re-record with --source anthropic for model output.",
+ "model": "offline-templates-v1",
+ "recorded_at": "2026-10-22T21:28:00Z",
+ "autoswe_version": "0.1.0",
+ "sandbox": "local",
+ "calls": [
+  {
+   "agent": "analyst",
+   "request_sha256": "58507b1d624c2dd2d713282a529134c732fc5a44152e65a5a449f6f54869ded0",
+   "model": "offline-templates-v1",
+   "usage": {},
+   "output": {
+    "project_name": "products-service",
+    "summary": "Inventory service.",
+    "user_stories": [
+     "As an API client, I can manage products (create, list, view, update, delete).",
+     "As an API client, I can manage shipments (create, list, view, update, delete)."
+    ],
+    "functional_requirements": [
+     "Inventory service.",
+     "Entities: Product(name, price:float, stock:int, active:bool), Shipment(carrier, shipped_at:datetime, delivered_on?:date, notes?)",
+     "Expose create, read, update, delete and paginated list operations for products.",
+     "Expose create, read, update, delete and paginated list operations for shipments."
+    ],
+    "non_functional_requirements": [
+     "Ship as a non-root container image with a health check.",
+     "Every change runs lint, tests and an image build in CI.",
+     "Configuration comes from environment variables (12-factor)."
+    ],
+    "entities": [
+     {
+      "name": "Product",
+      "description": "Product records.",
+      "fields": [
+       {
+        "name": "name",
+        "type": "string",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "price",
+        "type": "float",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "stock",
+        "type": "integer",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "active",
+        "type": "boolean",
+        "required": true,
+        "description": ""
+       }
+      ]
+     },
+     {
+      "name": "Shipment",
+      "description": "Shipment records.",
+      "fields": [
+       {
+        "name": "carrier",
+        "type": "string",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "shipped_at",
+        "type": "datetime",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "delivered_on",
+        "type": "date",
+        "required": false,
+        "description": ""
+       },
+       {
+        "name": "notes",
+        "type": "text",
+        "required": false,
+        "description": ""
+       }
+      ]
+     }
+    ],
+    "assumptions": [
+     "Single-tenant HTTP JSON API.",
+     "SQLite for local development, PostgreSQL in production via DATABASE_URL."
+    ],
+    "out_of_scope": [
+     "Authentication and authorisation (not requested).",
+     "A graphical frontend; the deliverable is an HTTP API."
+    ]
+   }
+  },
+  {
+   "agent": "architect",
+   "request_sha256": "660a95fd160627f461a58004d9d0413600293d7c281d9ca5d0e0960fac0bf584",
+   "model": "offline-templates-v1",
+   "usage": {},
+   "output": {
+    "style": "Modular monolith (single stateless HTTP service)",
+    "overview": "Inventory service. The service is a stateless FastAPI application; each entity gets its own router, Pydantic schemas and SQLAlchemy model. State lives in a relational database so replicas can scale horizontally.",
+    "components": [
+     {
+      "name": "HTTP API",
+      "responsibility": "Routing, request validation and JSON serialisation",
+      "technology": "FastAPI + Pydantic v2",
+      "depends_on": [
+       "Persistence"
+      ]
+     },
+     {
+      "name": "Persistence",
+      "responsibility": "ORM models, sessions and schema creation",
+      "technology": "SQLAlchemy 2.0",
+      "depends_on": [
+       "Database"
+      ]
+     },
+     {
+      "name": "Database",
+      "responsibility": "Durable storage for all entities",
+      "technology": "PostgreSQL (SQLite locally)",
+      "depends_on": []
+     },
+     {
+      "name": "Delivery pipeline",
+      "responsibility": "Lint, test, build and publish the container image",
+      "technology": "GitHub Actions + Docker",
+      "depends_on": [
+       "HTTP API"
+      ]
+     }
+    ],
+    "entities": [
+     {
+      "name": "Product",
+      "description": "Product records.",
+      "fields": [
+       {
+        "name": "name",
+        "type": "string",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "price",
+        "type": "float",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "stock",
+        "type": "integer",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "active",
+        "type": "boolean",
+        "required": true,
+        "description": ""
+       }
+      ]
+     },
+     {
+      "name": "Shipment",
+      "description": "Shipment records.",
+      "fields": [
+       {
+        "name": "carrier",
+        "type": "string",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "shipped_at",
+        "type": "datetime",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "delivered_on",
+        "type": "date",
+        "required": false,
+        "description": ""
+       },
+       {
+        "name": "notes",
+        "type": "text",
+        "required": false,
+        "description": ""
+       }
+      ]
+     }
+    ],
+    "endpoints": [
+     {
+      "method": "GET",
+      "path": "/healthz",
+      "summary": "Liveness probe",
+      "entity": null
+     },
+     {
+      "method": "GET",
+      "path": "/products",
+      "summary": "List products",
+      "entity": "Product"
+     },
+     {
+      "method": "POST",
+      "path": "/products",
+      "summary": "Create a product",
+      "entity": "Product"
+     },
+     {
+      "method": "GET",
+      "path": "/products/{product_id}",
+      "summary": "Get one product",
+      "entity": "Product"
+     },
+     {
+      "method": "PATCH",
+      "path": "/products/{product_id}",
+      "summary": "Update a product",
+      "entity": "Product"
+     },
+     {
+      "method": "DELETE",
+      "path": "/products/{product_id}",
+      "summary": "Delete a product",
+      "entity": "Product"
+     },
+     {
+      "method": "GET",
+      "path": "/shipments",
+      "summary": "List shipments",
+      "entity": "Shipment"
+     },
+     {
+      "method": "POST",
+      "path": "/shipments",
+      "summary": "Create a shipment",
+      "entity": "Shipment"
+     },
+     {
+      "method": "GET",
+      "path": "/shipments/{shipment_id}",
+      "summary": "Get one shipment",
+      "entity": "Shipment"
+     },
+     {
+      "method": "PATCH",
+      "path": "/shipments/{shipment_id}",
+      "summary": "Update a shipment",
+      "entity": "Shipment"
+     },
+     {
+      "method": "DELETE",
+      "path": "/shipments/{shipment_id}",
+      "summary": "Delete a shipment",
+      "entity": "Shipment"
+     }
+    ],
+    "tech_stack": [
+     {
+      "layer": "Language",
+      "choice": "Python 3.12",
+      "rationale": "Mature typing and a large ecosystem for web services"
+     },
+     {
+      "layer": "Web framework",
+      "choice": "FastAPI",
+      "rationale": "Typed request validation and OpenAPI docs for free"
+     },
+     {
+      "layer": "ORM",
+      "choice": "SQLAlchemy 2.0",
+      "rationale": "Database-agnostic; same code on SQLite and PostgreSQL"
+     },
+     {
+      "layer": "Packaging",
+      "choice": "Docker (python:3.12-slim, non-root)",
+      "rationale": "Reproducible runtime with a small attack surface"
+     },
+     {
+      "layer": "Orchestration",
+      "choice": "Kubernetes Deployment + Service",
+      "rationale": "Rolling updates, probes and horizontal scaling"
+     },
+     {
+      "layer": "Infrastructure as code",
+      "choice": "Terraform (AWS ECS Fargate)",
+      "rationale": "Declarative, reviewable infrastructure changes"
+     }
+    ],
+    "deployment": {
+     "container_port": 8000,
+     "replicas": 2,
+     "database": "postgres",
+     "cloud_target": "aws-ecs-fargate",
+     "environment_variables": [
+      "DATABASE_URL"
+     ]
+    },
+    "decisions": [
+     {
+      "title": "One service, one database",
+      "decision": "Ship a single deployable instead of microservices.",
+      "rationale": "The domain is small; a monolith keeps transactions and deploys simple.",
+      "alternatives": [
+       "Microservice per entity",
+       "Serverless functions"
+      ]
+     },
+     {
+      "title": "Create schema on startup",
+      "decision": "Call metadata.create_all() at startup instead of migrations.",
+      "rationale": "Keeps the scaffold minimal; adopt Alembic before schemas evolve.",
+      "alternatives": [
+       "Alembic migrations from day one"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "agent": "coder",
+   "request_sha256": "2cb74540096a32fe075b0e1d047f5af44a3158bb18030b3d0c453c8f9fbf220e",
+   "model": "offline-templates-v1",
+   "usage": {},
+   "output": {
+    "files": [
+     {
+      "path": "pyproject.toml",
+      "content": "[project]\nname = \"products-service\"\nversion = \"0.1.0\"\ndescription = \"Inventory service.\"\nreadme = \"README.md\"\nrequires-python = \">=3.12\"\ndependencies = [\n    \"fastapi>=0.115\",\n    \"uvicorn[standard]>=0.34\",\n    \"sqlalchemy>=2.0.36\",\n    \"pydantic>=2.10\",\n    \"psycopg[binary]>=3.2\",\n]\n\n[dependency-groups]\ndev = [\"pytest>=8.3\", \"httpx2>=2.16\", \"ruff>=0.9\"]\n\n[build-system]\nrequires = [\"hatchling>=1.26\"]\nbuild-backend = \"hatchling.build\"\n\n[tool.hatch.build.targets.wheel]\npackages = [\"app\"]\n\n[tool.ruff]\nline-length = 100\ntarget-version = \"py312\"\n\n[tool.ruff.lint]\nselect = [\"E\", \"F\", \"I\", \"B\", \"UP\"]\n\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\npythonpath = [\".\"]\n",
+      "description": "Project metadata, dependencies and tool configuration"
+     },
+     {
+      "path": "README.md",
+      "content": "# products-service\n\nInventory service.\n\n> Generated by the Autonomous AI Software Engineering Platform (offline provider).\n> Review the code before deploying it anywhere that matters.\n\n## Run locally\n\n```bash\npython -m venv .venv && . .venv/bin/activate\npip install -e . pytest httpx2 ruff\nuvicorn app.main:app --reload\n```\n\nOpen http://localhost:8000/docs for the interactive OpenAPI UI.\n\n## Test\n\n```bash\nruff check . && pytest\n```\n\n## Container\n\n```bash\ndocker build -t products-service:local .\ndocker run --rm -p 8000:8000 products-service:local\n```\n\n## API\n\n| Method | Path | Description |\n| --- | --- | --- |\n| `GET` | `/healthz` | Liveness probe |\n| `GET` | `/products` | List products |\n| `POST` | `/products` | Create a product |\n| `GET` | `/products/{product_id}` | Get one product |\n| `PATCH` | `/products/{product_id}` | Update a product |\n| `DELETE` | `/products/{product_id}` | Delete a product |\n| `GET` | `/shipments` | List shipments |\n| `POST` | `/shipments` | Create a shipment |\n| `GET` | `/shipments/{shipment_id}` | Get one shipment |\n| `PATCH` | `/shipments/{shipment_id}` | Update a shipment |\n| `DELETE` | `/shipments/{shipment_id}` | Delete a shipment |\n\n## Deployment\n\n* `deploy/k8s/` - Kustomize base (Deployment, Service). Set `DATABASE_URL` through the\n  referenced Secret.\n* `deploy/terraform/` - AWS ECR + ECS Fargate service. Run `terraform init && terraform\n  plan` with your own VPC and subnets; nothing is applied automatically.\n\nSee `ARCHITECTURE.md` for components and design decisions.\n",
+      "description": "How to run, test and deploy the service"
+     },
+     {
+      "path": "app/__init__.py",
+      "content": "",
+      "description": "Application package"
+     },
+     {
+      "path": "app/db.py",
+      "content": "\"\"\"Database engine, session factory and declarative base.\"\"\"\n\nimport os\nfrom collections.abc import Iterator\n\nfrom sqlalchemy import create_engine\nfrom sqlalchemy.orm import DeclarativeBase, Session, sessionmaker\n\nDATABASE_URL = os.getenv(\"DATABASE_URL\", \"sqlite:///./app.db\")\n\n_connect_args = {\"check_same_thread\": False} if DATABASE_URL.startswith(\"sqlite\") else {}\nengine = create_engine(DATABASE_URL, connect_args=_connect_args, pool_pre_ping=True)\nSessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)\n\n\nclass Base(DeclarativeBase):\n    pass\n\n\ndef get_session() -> Iterator[Session]:\n    with SessionLocal() as session:\n        yield session\n",
+      "description": "Engine, session factory and declarative base"
+     },
+     {
+      "path": "app/models.py",
+      "content": "\"\"\"SQLAlchemy ORM models.\"\"\"\n\nfrom datetime import UTC, date, datetime\n\nfrom sqlalchemy import Boolean, Date, DateTime, Float, Integer, String, Text\nfrom sqlalchemy.orm import Mapped, mapped_column\n\nfrom app.db import Base\n\n\ndef _utcnow() -> datetime:\n    return datetime.now(UTC)\n\n\nclass Product(Base):\n    __tablename__ = \"products\"\n\n    id: Mapped[int] = mapped_column(Integer, primary_key=True)\n    name: Mapped[str] = mapped_column(String(255), nullable=False)\n    price: Mapped[float] = mapped_column(Float, nullable=False)\n    stock: Mapped[int] = mapped_column(Integer, nullable=False)\n    active: Mapped[bool] = mapped_column(Boolean, nullable=False)\n    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)\n\n\nclass Shipment(Base):\n    __tablename__ = \"shipments\"\n\n    id: Mapped[int] = mapped_column(Integer, primary_key=True)\n    carrier: Mapped[str] = mapped_column(String(255), nullable=False)\n    shipped_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)\n    delivered_on: Mapped[date | None] = mapped_column(Date, nullable=True)\n    notes: Mapped[str | None] = mapped_column(Text, nullable=True)\n    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)\n",
+      "description": "SQLAlchemy ORM models"
+     },
+     {
+      "path": "app/schemas.py",
+      "content": "\"\"\"Pydantic request/response schemas.\"\"\"\n\nfrom datetime import date, datetime\n\nfrom pydantic import BaseModel, ConfigDict, Field\n\n\nclass ProductCreate(BaseModel):\n    name: str = Field(..., max_length=255)\n    price: float = Field(...)\n    stock: int = Field(...)\n    active: bool = Field(...)\n\n\nclass ProductUpdate(BaseModel):\n    name: str | None = Field(None, max_length=255)\n    price: float | None = Field(None)\n    stock: int | None = Field(None)\n    active: bool | None = Field(None)\n\n\nclass ProductRead(ProductCreate):\n    model_config = ConfigDict(from_attributes=True)\n\n    id: int\n    created_at: datetime\n\n\nclass ShipmentCreate(BaseModel):\n    carrier: str = Field(..., max_length=255)\n    shipped_at: datetime = Field(...)\n    delivered_on: date | None = Field(None)\n    notes: str | None = Field(None)\n\n\nclass ShipmentUpdate(BaseModel):\n    carrier: str | None = Field(None, max_length=255)\n    shipped_at: datetime | None = Field(None)\n    delivered_on: date | None = Field(None)\n    notes: str | None = Field(None)\n\n\nclass ShipmentRead(ShipmentCreate):\n    model_config = ConfigDict(from_attributes=True)\n\n    id: int\n    created_at: datetime\n",
+      "description": "Pydantic request and response schemas"
+     },
+     {
+      "path": "app/main.py",
+      "content": "\"\"\"Application entry point.\"\"\"\n\nfrom collections.abc import AsyncIterator\nfrom contextlib import asynccontextmanager\n\nfrom fastapi import FastAPI\n\nfrom app.db import Base, engine\nfrom app.routers import products, shipments\n\n\n@asynccontextmanager\nasync def lifespan(_: FastAPI) -> AsyncIterator[None]:\n    Base.metadata.create_all(engine)\n    yield\n\n\napp = FastAPI(title=\"Products Service\", version=\"0.1.0\", lifespan=lifespan)\napp.include_router(products.router)\napp.include_router(shipments.router)\n\n\n@app.get(\"/healthz\", tags=[\"ops\"])\ndef healthz() -> dict[str, str]:\n    return {\"status\": \"ok\"}\n",
+      "description": "FastAPI application and router wiring"
+     },
+     {
+      "path": "app/routers/__init__.py",
+      "content": "",
+      "description": "Router package"
+     },
+     {
+      "path": "tests/__init__.py",
+      "content": "",
+      "description": "Test package"
+     },
+     {
+      "path": "tests/conftest.py",
+      "content": "import os\nimport tempfile\nfrom collections.abc import Iterator\nfrom pathlib import Path\n\nimport pytest\n\n_DB_FILE = Path(tempfile.mkdtemp()) / \"test.db\"\nos.environ[\"DATABASE_URL\"] = f\"sqlite:///{_DB_FILE.as_posix()}\"\n\nfrom fastapi.testclient import TestClient  # noqa: E402\n\nfrom app.db import Base, engine  # noqa: E402\nfrom app.main import app  # noqa: E402\n\n\n@pytest.fixture\ndef client() -> Iterator[TestClient]:\n    Base.metadata.drop_all(engine)\n    with TestClient(app) as test_client:\n        yield test_client\n",
+      "description": "Isolated SQLite database and HTTP client fixture"
+     },
+     {
+      "path": "tests/test_health.py",
+      "content": "from fastapi.testclient import TestClient\n\n\ndef test_healthz(client: TestClient) -> None:\n    response = client.get(\"/healthz\")\n    assert response.status_code == 200\n    assert response.json() == {\"status\": \"ok\"}\n",
+      "description": "Health endpoint test"
+     },
+     {
+      "path": "app/routers/products.py",
+      "content": "\"\"\"CRUD endpoints for products.\"\"\"\n\nfrom typing import Annotated\n\nfrom fastapi import APIRouter, Depends, HTTPException, Query, Response, status\nfrom sqlalchemy import select\nfrom sqlalchemy.orm import Session\n\nfrom app.db import get_session\nfrom app.models import Product\nfrom app.schemas import ProductCreate, ProductRead, ProductUpdate\n\nrouter = APIRouter(prefix=\"/products\", tags=[\"products\"])\nSessionDep = Annotated[Session, Depends(get_session)]\n\n\ndef _get_or_404(session: Session, product_id: int) -> Product:\n    product = session.get(Product, product_id)\n    if product is None:\n        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=\"Product not found\")\n    return product\n\n\n@router.get(\"\", response_model=list[ProductRead])\ndef list_products(\n    session: SessionDep,\n    limit: Annotated[int, Query(ge=1, le=200)] = 50,\n    offset: Annotated[int, Query(ge=0)] = 0,\n) -> list[Product]:\n    query = select(Product).order_by(Product.id).offset(offset).limit(limit)\n    return list(session.scalars(query))\n\n\n@router.post(\"\", response_model=ProductRead, status_code=status.HTTP_201_CREATED)\ndef create_product(payload: ProductCreate, session: SessionDep) -> Product:\n    product = Product(**payload.model_dump())\n    session.add(product)\n    session.commit()\n    session.refresh(product)\n    return product\n\n\n@router.get(\"/{product_id}\", response_model=ProductRead)\ndef get_product(product_id: int, session: SessionDep) -> Product:\n    return _get_or_404(session, product_id)\n\n\n@router.patch(\"/{product_id}\", response_model=ProductRead)\ndef update_product(\n    product_id: int,\n    payload: ProductUpdate,\n    session: SessionDep,\n) -> Product:\n    product = _get_or_404(session, product_id)\n    for key, value in payload.model_dump(exclude_unset=True).items():\n        setattr(product, key, value)\n    session.commit()\n    session.refresh(product)\n    return product\n\n\n@router.delete(\"/{product_id}\", status_code=status.HTTP_204_NO_CONTENT)\ndef delete_product(product_id: int, session: SessionDep) -> Response:\n    session.delete(_get_or_404(session, product_id))\n    session.commit()\n    return Response(status_code=status.HTTP_204_NO_CONTENT)\n",
+      "description": "CRUD endpoints for products"
+     },
+     {
+      "path": "tests/test_products.py",
+      "content": "from fastapi.testclient import TestClient\n\nPAYLOAD = {\n    \"name\": \"example name\",\n    \"price\": 9.5,\n    \"stock\": 3,\n    \"active\": True,\n}\n\n\ndef test_create_and_get_product(client: TestClient) -> None:\n    response = client.post(\"/products\", json=PAYLOAD)\n    assert response.status_code == 201, response.text\n    created = response.json()\n    assert created[\"name\"] == \"example name\"\n    assert created[\"price\"] == 9.5\n    assert created[\"stock\"] == 3\n    assert created[\"active\"] is True\n    fetched = client.get(f\"/products/{created['id']}\")\n    assert fetched.status_code == 200\n    assert fetched.json()[\"id\"] == created[\"id\"]\n\n\ndef test_list_product_supports_pagination(client: TestClient) -> None:\n    for _ in range(3):\n        assert client.post(\"/products\", json=PAYLOAD).status_code == 201\n    page = client.get(\"/products\", params={\"limit\": 2, \"offset\": 1})\n    assert page.status_code == 200\n    assert len(page.json()) == 2\n\n\ndef test_update_product(client: TestClient) -> None:\n    created = client.post(\"/products\", json=PAYLOAD).json()\n    response = client.patch(\n        f\"/products/{created['id']}\", json={\"name\": \"updated name\"}\n    )\n    assert response.status_code == 200\n    assert response.json()[\"name\"] == \"updated name\"\n\n\ndef test_delete_product(client: TestClient) -> None:\n    created = client.post(\"/products\", json=PAYLOAD).json()\n    assert client.delete(f\"/products/{created['id']}\").status_code == 204\n    assert client.get(f\"/products/{created['id']}\").status_code == 404\n\n\ndef test_unknown_product_returns_404(client: TestClient) -> None:\n    assert client.get(\"/products/999999\").status_code == 404\n\n\ndef test_create_product_rejects_missing_required_fields(client: TestClient) -> None:\n    assert client.post(\"/products\", json={}).status_code == 422\n",
+      "description": "API tests for products"
+     },
+     {
+      "path": "app/routers/shipments.py",
+      "content": "\"\"\"CRUD endpoints for shipments.\"\"\"\n\nfrom typing import Annotated\n\nfrom fastapi import APIRouter, Depends, HTTPException, Query, Response, status\nfrom sqlalchemy import select\nfrom sqlalchemy.orm import Session\n\nfrom app.db import get_session\nfrom app.models import Shipment\nfrom app.schemas import ShipmentCreate, ShipmentRead, ShipmentUpdate\n\nrouter = APIRouter(prefix=\"/shipments\", tags=[\"shipments\"])\nSessionDep = Annotated[Session, Depends(get_session)]\n\n\ndef _get_or_404(session: Session, shipment_id: int) -> Shipment:\n    shipment = session.get(Shipment, shipment_id)\n    if shipment is None:\n        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=\"Shipment not found\")\n    return shipment\n\n\n@router.get(\"\", response_model=list[ShipmentRead])\ndef list_shipments(\n    session: SessionDep,\n    limit: Annotated[int, Query(ge=1, le=200)] = 50,\n    offset: Annotated[int, Query(ge=0)] = 0,\n) -> list[Shipment]:\n    query = select(Shipment).order_by(Shipment.id).offset(offset).limit(limit)\n    return list(session.scalars(query))\n\n\n@router.post(\"\", response_model=ShipmentRead, status_code=status.HTTP_201_CREATED)\ndef create_shipment(payload: ShipmentCreate, session: SessionDep) -> Shipment:\n    shipment = Shipment(**payload.model_dump())\n    session.add(shipment)\n    session.commit()\n    session.refresh(shipment)\n    return shipment\n\n\n@router.get(\"/{shipment_id}\", response_model=ShipmentRead)\ndef get_shipment(shipment_id: int, session: SessionDep) -> Shipment:\n    return _get_or_404(session, shipment_id)\n\n\n@router.patch(\"/{shipment_id}\", response_model=ShipmentRead)\ndef update_shipment(\n    shipment_id: int,\n    payload: ShipmentUpdate,\n    session: SessionDep,\n) -> Shipment:\n    shipment = _get_or_404(session, shipment_id)\n    for key, value in payload.model_dump(exclude_unset=True).items():\n        setattr(shipment, key, value)\n    session.commit()\n    session.refresh(shipment)\n    return shipment\n\n\n@router.delete(\"/{shipment_id}\", status_code=status.HTTP_204_NO_CONTENT)\ndef delete_shipment(shipment_id: int, session: SessionDep) -> Response:\n    session.delete(_get_or_404(session, shipment_id))\n    session.commit()\n    return Response(status_code=status.HTTP_204_NO_CONTENT)\n",
+      "description": "CRUD endpoints for shipments"
+     },
+     {
+      "path": "tests/test_shipments.py",
+      "content": "from fastapi.testclient import TestClient\n\nPAYLOAD = {\n    \"carrier\": \"example carrier\",\n    \"shipped_at\": \"2025-01-15T09:30:00Z\",\n    \"delivered_on\": \"2025-01-15\",\n    \"notes\": \"Some longer notes text.\",\n}\n\n\ndef test_create_and_get_shipment(client: TestClient) -> None:\n    response = client.post(\"/shipments\", json=PAYLOAD)\n    assert response.status_code == 201, response.text\n    created = response.json()\n    assert created[\"carrier\"] == \"example carrier\"\n    assert created[\"notes\"] == \"Some longer notes text.\"\n    fetched = client.get(f\"/shipments/{created['id']}\")\n    assert fetched.status_code == 200\n    assert fetched.json()[\"id\"] == created[\"id\"]\n\n\ndef test_list_shipment_supports_pagination(client: TestClient) -> None:\n    for _ in range(3):\n        assert client.post(\"/shipments\", json=PAYLOAD).status_code == 201\n    page = client.get(\"/shipments\", params={\"limit\": 2, \"offset\": 1})\n    assert page.status_code == 200\n    assert len(page.json()) == 2\n\n\ndef test_update_shipment(client: TestClient) -> None:\n    created = client.post(\"/shipments\", json=PAYLOAD).json()\n    response = client.patch(\n        f\"/shipments/{created['id']}\", json={\"carrier\": \"updated carrier\"}\n    )\n    assert response.status_code == 200\n    assert response.json()[\"carrier\"] == \"updated carrier\"\n\n\ndef test_delete_shipment(client: TestClient) -> None:\n    created = client.post(\"/shipments\", json=PAYLOAD).json()\n    assert client.delete(f\"/shipments/{created['id']}\").status_code == 204\n    assert client.get(f\"/shipments/{created['id']}\").status_code == 404\n\n\ndef test_unknown_shipment_returns_404(client: TestClient) -> None:\n    assert client.get(\"/shipments/999999\").status_code == 404\n\n\ndef test_create_shipment_rejects_missing_required_fields(client: TestClient) -> None:\n    assert client.post(\"/shipments\", json={}).status_code == 422\n",
+      "description": "API tests for shipments"
+     }
+    ],
+    "notes": "Rendered from offline templates."
+   }
+  },
+  {
+   "agent": "devops",
+   "request_sha256": "4c64adfd7f8832389262d468e6b44d43daf0ded04a1999d08e1815393ab540c6",
+   "model": "offline-templates-v1",
+   "usage": {},
+   "output": {
+    "files": [
+     {
+      "path": "Dockerfile",
+      "content": "# syntax=docker/dockerfile:1.7\nFROM python:3.12-slim AS build\nENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1\nWORKDIR /src\nRUN python -m venv /opt/venv\nENV PATH=/opt/venv/bin:$PATH\nCOPY pyproject.toml README.md ./\nCOPY app ./app\nRUN pip install .\n\nFROM python:3.12-slim AS runtime\nENV PATH=/opt/venv/bin:$PATH PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1\nRUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin app\nCOPY --from=build /opt/venv /opt/venv\nWORKDIR /home/app\nUSER 10001\nEXPOSE 8000\nHEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \\\n  CMD [\"python\", \"-c\", \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)\"]\nCMD [\"uvicorn\", \"app.main:app\", \"--host\", \"0.0.0.0\", \"--port\", \"8000\"]\n",
+      "description": "Multi-stage, non-root image with a health check"
+     },
+     {
+      "path": ".dockerignore",
+      "content": ".git\n.github\n.venv\n__pycache__/\n*.pyc\n*.db\n.pytest_cache/\n.ruff_cache/\ndeploy/\ntests/\n",
+      "description": "Keeps the build context small"
+     },
+     {
+      "path": ".github/workflows/ci.yml",
+      "content": "name: CI\n\non:\n  push:\n    branches: [main]\n  pull_request:\n\npermissions:\n  contents: read\n\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - uses: actions/setup-python@v7\n        with:\n          python-version: \"3.12\"\n          cache: pip\n      - name: Install\n        run: pip install -e . pytest httpx2 ruff\n      - name: Lint\n        run: ruff check .\n      - name: Test\n        run: pytest -q\n\n  image:\n    runs-on: ubuntu-latest\n    needs: test\n    steps:\n      - uses: actions/checkout@v7\n      - uses: docker/setup-buildx-action@v4\n      - name: Build image\n        uses: docker/build-push-action@v7\n        with:\n          context: .\n          push: false\n          tags: products-service:${{ github.sha }}\n",
+      "description": "Lint, test and image build on every push"
+     },
+     {
+      "path": "deploy/k8s/deployment.yaml",
+      "content": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: products-service\n  labels:\n    app.kubernetes.io/name: products-service\nspec:\n  replicas: 2\n  selector:\n    matchLabels:\n      app.kubernetes.io/name: products-service\n  template:\n    metadata:\n      labels:\n        app.kubernetes.io/name: products-service\n    spec:\n      securityContext:\n        runAsNonRoot: true\n        runAsUser: 10001\n        seccompProfile:\n          type: RuntimeDefault\n      containers:\n        - name: api\n          image: products-service:latest\n          imagePullPolicy: IfNotPresent\n          ports:\n            - name: http\n              containerPort: 8000\n          env:\n            - name: DATABASE_URL\n              valueFrom:\n                secretKeyRef:\n                  name: products-service-database\n                  key: url\n                  optional: true\n          readinessProbe:\n            httpGet:\n              path: /healthz\n              port: http\n            periodSeconds: 10\n          livenessProbe:\n            httpGet:\n              path: /healthz\n              port: http\n            initialDelaySeconds: 10\n            periodSeconds: 20\n          resources:\n            requests:\n              cpu: 100m\n              memory: 128Mi\n            limits:\n              cpu: 500m\n              memory: 256Mi\n          securityContext:\n            allowPrivilegeEscalation: false\n            capabilities:\n              drop: [ALL]\n",
+      "description": "Deployment with probes, limits and a restricted security context"
+     },
+     {
+      "path": "deploy/k8s/service.yaml",
+      "content": "apiVersion: v1\nkind: Service\nmetadata:\n  name: products-service\n  labels:\n    app.kubernetes.io/name: products-service\nspec:\n  selector:\n    app.kubernetes.io/name: products-service\n  ports:\n    - name: http\n      port: 80\n      targetPort: http\n",
+      "description": "ClusterIP service"
+     },
+     {
+      "path": "deploy/k8s/kustomization.yaml",
+      "content": "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nlabels:\n  - pairs:\n      app.kubernetes.io/part-of: products-service\nresources:\n  - deployment.yaml\n  - service.yaml\n",
+      "description": "Kustomize entry point"
+     },
+     {
+      "path": "deploy/terraform/versions.tf",
+      "content": "terraform {\n  required_version = \">= 1.6\"\n  required_providers {\n    aws = {\n      source  = \"hashicorp/aws\"\n      version = \"~> 5.0\"\n    }\n  }\n}\n\nprovider \"aws\" {\n  region = var.region\n}\n",
+      "description": "Terraform and provider constraints"
+     },
+     {
+      "path": "deploy/terraform/variables.tf",
+      "content": "variable \"region\" {\n  description = \"AWS region to deploy into\"\n  type        = string\n  default     = \"us-east-1\"\n}\n\nvariable \"name\" {\n  description = \"Name prefix for every resource\"\n  type        = string\n  default     = \"products-service\"\n}\n\nvariable \"image_tag\" {\n  description = \"Immutable image tag in the ECR repository to run (e.g. a git SHA)\"\n  type        = string\n}\n\nvariable \"vpc_id\" {\n  description = \"VPC the service runs in\"\n  type        = string\n}\n\nvariable \"subnet_ids\" {\n  description = \"Private subnets for the Fargate tasks\"\n  type        = list(string)\n}\n\nvariable \"container_port\" {\n  description = \"Port the container listens on\"\n  type        = number\n  default     = 8000\n}\n\nvariable \"desired_count\" {\n  description = \"Number of running tasks\"\n  type        = number\n  default     = 2\n}\n\nvariable \"database_url_secret_arn\" {\n  description = \"Optional Secrets Manager ARN holding DATABASE_URL\"\n  type        = string\n  default     = \"\"\n}\n",
+      "description": "Inputs: region, VPC, subnets, image tag"
+     },
+     {
+      "path": "deploy/terraform/main.tf",
+      "content": "locals {\n  secrets = var.database_url_secret_arn == \"\" ? [] : [\n    { name = \"DATABASE_URL\", valueFrom = var.database_url_secret_arn }\n  ]\n}\n\nresource \"aws_ecr_repository\" \"app\" {\n  name                 = var.name\n  image_tag_mutability = \"IMMUTABLE\"\n\n  image_scanning_configuration {\n    scan_on_push = true\n  }\n}\n\nresource \"aws_cloudwatch_log_group\" \"app\" {\n  name              = \"/ecs/${var.name}\"\n  retention_in_days = 30\n}\n\nresource \"aws_ecs_cluster\" \"this\" {\n  name = var.name\n\n  setting {\n    name  = \"containerInsights\"\n    value = \"enabled\"\n  }\n}\n\ndata \"aws_iam_policy_document\" \"ecs_tasks_assume\" {\n  statement {\n    actions = [\"sts:AssumeRole\"]\n    principals {\n      type        = \"Service\"\n      identifiers = [\"ecs-tasks.amazonaws.com\"]\n    }\n  }\n}\n\nresource \"aws_iam_role\" \"execution\" {\n  name               = \"${var.name}-execution\"\n  assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json\n}\n\nresource \"aws_iam_role_policy_attachment\" \"execution\" {\n  role       = aws_iam_role.execution.name\n  policy_arn = \"arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy\"\n}\n\nresource \"aws_security_group\" \"service\" {\n  name        = \"${var.name}-service\"\n  description = \"Ingress to the ${var.name} tasks\"\n  vpc_id      = var.vpc_id\n\n  ingress {\n    description = \"HTTP from inside the VPC\"\n    from_port   = var.container_port\n    to_port     = var.container_port\n    protocol    = \"tcp\"\n    cidr_blocks = [\"10.0.0.0/8\"]\n  }\n\n  egress {\n    description = \"Outbound HTTPS and database traffic\"\n    from_port   = 0\n    to_port     = 0\n    protocol    = \"-1\"\n    cidr_blocks = [\"0.0.0.0/0\"]\n  }\n}\n\nresource \"aws_ecs_task_definition\" \"app\" {\n  family                   = var.name\n  requires_compatibilities = [\"FARGATE\"]\n  network_mode             = \"awsvpc\"\n  cpu                      = 256\n  memory                   = 512\n  execution_role_arn       = aws_iam_role.execution.arn\n\n  container_definitions = jsonencode([\n    {\n      name         = \"api\"\n      image        = \"${aws_ecr_repository.app.repository_url}:${var.image_tag}\"\n      essential    = true\n      portMappings = [{ containerPort = var.container_port, protocol = \"tcp\" }]\n      secrets      = local.secrets\n      logConfiguration = {\n        logDriver = \"awslogs\"\n        options = {\n          awslogs-group         = aws_cloudwatch_log_group.app.name\n          awslogs-region        = var.region\n          awslogs-stream-prefix = \"api\"\n        }\n      }\n    }\n  ])\n}\n\nresource \"aws_ecs_service\" \"app\" {\n  name            = var.name\n  cluster         = aws_ecs_cluster.this.id\n  task_definition = aws_ecs_task_definition.app.arn\n  desired_count   = var.desired_count\n  launch_type     = \"FARGATE\"\n\n  network_configuration {\n    subnets          = var.subnet_ids\n    security_groups  = [aws_security_group.service.id]\n    assign_public_ip = false\n  }\n\n  deployment_circuit_breaker {\n    enable   = true\n    rollback = true\n  }\n}\n",
+      "description": "ECR repository, ECS cluster, task definition and service"
+     },
+     {
+      "path": "deploy/terraform/outputs.tf",
+      "content": "output \"ecr_repository_url\" {\n  description = \"Push the image here\"\n  value       = aws_ecr_repository.app.repository_url\n}\n\noutput \"ecs_service_name\" {\n  description = \"Name of the ECS service\"\n  value       = aws_ecs_service.app.name\n}\n",
+      "description": "Repository URL and service name"
+     }
+    ],
+    "notes": ""
+   }
+  },
+  {
+   "agent": "reviewer",
+   "request_sha256": "e41ea21c3a1425b2ddc66cac3c649a7c55303a8521219ace8ed77df9583a3e52",
+   "model": "offline-templates-v1",
+   "usage": {},
+   "output": {
+    "summary": "Deterministic review of 28 files: the project passes all structural checks with 0 warning(s). All 13 generated tests pass in the sandbox. Offline reviews do not judge business logic.",
+    "score": 100,
+    "findings": [
+     {
+      "severity": "info",
+      "file": "app/main.py",
+      "message": "Tables are created with metadata.create_all() at startup.",
+      "suggestion": "Introduce Alembic migrations before the first schema change in production."
+     },
+     {
+      "severity": "info",
+      "file": null,
+      "message": "The API is unauthenticated because the spec did not ask for auth.",
+      "suggestion": "Add OAuth2 or an authenticating gateway before exposing it publicly."
+     }
+    ]
+   }
+  }
+ ]
+}
