@@ -97,11 +97,18 @@ async def list_jobs(
     repo: RepositoryDep,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     before: Annotated[datetime | None, Query(description="Cursor from next_cursor")] = None,
+    before_id: Annotated[str | None, Query(description="Cursor from next_cursor_id")] = None,
 ) -> JobPage:
-    jobs = await repo.list_for_owner(principal.name, limit=limit + 1, before=before)
+    jobs = await repo.list_for_owner(
+        principal.name, limit=limit + 1, before=before, before_id=before_id
+    )
     page = list(jobs[:limit])
-    next_cursor = page[-1].created_at if len(jobs) > limit else None
-    return JobPage(items=[JobSummary.from_model(job) for job in page], next_cursor=next_cursor)
+    more = len(jobs) > limit
+    return JobPage(
+        items=[JobSummary.from_model(job) for job in page],
+        next_cursor=page[-1].created_at if more else None,
+        next_cursor_id=page[-1].id if more else None,
+    )
 
 
 @router.get("/{job_id}", response_model=JobDetail)

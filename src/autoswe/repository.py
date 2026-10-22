@@ -6,7 +6,7 @@ from collections.abc import Iterable, Sequence
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from autoswe.models import (
@@ -55,10 +55,21 @@ class JobRepository:
         return (await self.session.execute(query)).scalar_one_or_none()
 
     async def list_for_owner(
-        self, owner: str, *, limit: int, before: datetime | None = None
+        self,
+        owner: str,
+        *,
+        limit: int,
+        before: datetime | None = None,
+        before_id: str | None = None,
     ) -> Sequence[Job]:
+        """Newest first. The cursor is (created_at, id), the same pair the list is ordered by,
+        so jobs sharing a timestamp across a page boundary are neither skipped nor repeated."""
         query = select(Job).where(Job.owner == owner)
-        if before is not None:
+        if before is not None and before_id is not None:
+            query = query.where(
+                or_(Job.created_at < before, and_(Job.created_at == before, Job.id < before_id))
+            )
+        elif before is not None:
             query = query.where(Job.created_at < before)
         query = query.order_by(Job.created_at.desc(), Job.id.desc()).limit(limit)
         return (await self.session.execute(query)).scalars().all()

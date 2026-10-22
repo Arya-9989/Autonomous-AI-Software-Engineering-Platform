@@ -6,7 +6,9 @@ import zipfile
 from typing import Any
 
 import pytest
+from sqlalchemy import update
 
+from autoswe.models import Job, utcnow
 from autoswe.repository import JobRepository
 from tests.conftest import ALICE, LIBRARY_SPEC, AppHarness, HarnessFactory
 
@@ -176,3 +178,25 @@ async def test_title_defaults_to_first_line_of_spec(harness_factory: HarnessFact
     assert len(job["title"]) <= 80
     short = await harness.submit(spec="A todo API for teams. Users create tasks and assign them.")
     assert short["title"] == "A todo API for teams"
+
+
+async def test_pagination_does_not_skip_jobs_created_in_the_same_instant(
+    harness_factory: HarnessFactory,
+) -> None:
+    harness = await harness_factory(worker_enabled=False, max_active_jobs_per_owner=10)
+    ids = [(await harness.submit(title=f"job {i}"))["id"] for i in range(5)]
+    # Give every job one timestamp, as a burst of submissions within a clock tick would get.
+    async with harness.app.state.services.db.session() as session:
+        await session.execute(update(Job).values(created_at=utcnow()))
+        await session.commit()
+
+    seen: list[str] = []
+    params: dict[str, Any] = {"limit": 2}
+    while True:
+        page = (await harness.client.get("/api/v1/jobs", params=params, headers=ALICE)).json()
+        seen += [job["id"] for job in page["items"]]
+        if not page["next_cursor"]:
+            break
+        params = {"limit": 2, "before": page["next_cursor"], "before_id": page["next_cursor_id"]}
+    assert sorted(seen) == sorted(ids)
+    assert len(seen) == len(set(seen))

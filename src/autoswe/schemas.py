@@ -154,6 +154,11 @@ class JobDetail(JobSummary):
 class JobPage(BaseModel):
     items: list[JobSummary]
     next_cursor: datetime | None
+    next_cursor_id: str | None = Field(
+        default=None,
+        description="Pass as before_id with before, so jobs created in the same "
+        "instant as the page's last job are neither skipped nor repeated.",
+    )
 
 
 _LANGUAGES = {
