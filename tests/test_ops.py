@@ -128,10 +128,13 @@ async def test_spa_fallback_serves_index(harness_factory: HarnessFactory, tmp_pa
     (static / "favicon.svg").write_text("<svg/>")
     harness = await harness_factory(static_dir=static, worker_enabled=False)
 
-    for path in ("/", "/app", "/app/jobs/123", "/jobs/123", "/new"):
+    for path in ("/", "/app", "/app/jobs/123", "/jobs/123"):
         response = await harness.client.get(path)
         assert response.status_code == 200
         assert "<title>ui</title>" in response.text
+    unknown = await harness.client.get("/new")  # not a client route: a real 404, same page
+    assert unknown.status_code == 404
+    assert "<title>ui</title>" in unknown.text
     assert (await harness.client.get("/assets/app.js")).text == "console.log(1)"
     assert (await harness.client.get("/favicon.svg")).text == "<svg/>"
     assert (await harness.client.get("/api/v1/nope")).status_code == 404

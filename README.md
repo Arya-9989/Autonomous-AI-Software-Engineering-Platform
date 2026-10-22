@@ -114,6 +114,9 @@ Animated WebP (479 KB), with a shorter GIF for clients that cannot show WebP.</s
     requirements tabs, a ⌘K / Ctrl+K command palette, toasts and accessible dialogs.
   - Light and dark themes that follow the OS (with a manual switch), reduced-motion support,
     designed loading, empty and error states, and layouts from 320px up.
+  - Unknown paths get a real `404` status with the designed "Page not found" page; the server
+    knows the client router's routes (`CLIENT_ROUTES` in `web.py`, kept in step by a test), so
+    deep links to real pages still return `200`.
   - Fast on a phone: the product page and the studio's loading states are prerendered at build
     time and hydrated, assets are precompressed (Brotli, gzip) and cached as immutable, the
     interface fonts are subset, code is highlighted in a Web Worker, and everything not needed
