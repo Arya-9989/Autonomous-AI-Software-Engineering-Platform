@@ -119,7 +119,7 @@ async def test_spa_fallback_serves_index(harness_factory: HarnessFactory, tmp_pa
     (static / "favicon.svg").write_text("<svg/>")
     harness = await harness_factory(static_dir=static, worker_enabled=False)
 
-    for path in ("/", "/jobs/123", "/new"):
+    for path in ("/", "/app", "/app/jobs/123", "/jobs/123", "/new"):
         response = await harness.client.get(path)
         assert response.status_code == 200
         assert "<title>ui</title>" in response.text
