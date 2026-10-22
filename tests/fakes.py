@@ -53,3 +53,37 @@ class ScriptedProvider:
 
 def registry_with(provider: Any) -> ProviderRegistry:
     return ProviderRegistry({"offline": OfflineProvider(), provider.name: provider}, provider.name)
+
+
+class PricedProvider:
+    """Offline answers billed like a Claude model, so cost and budget paths run for real.
+
+    Every call reports ``usage`` on ``model``; with the default numbers one call on
+    claude-opus-5-5 costs 300*4 + 600*0.20 + 100*5 + 200*20 = 5,820 micro-dollars.
+    """
+
+    name = "priced"
+
+    def __init__(
+        self,
+        model: str = "claude-opus-5-5",
+        usage: TokenUsage | None = None,
+        gate: asyncio.Event | None = None,
+    ) -> None:
+        self.model = model
+        self.usage = usage or TokenUsage(
+            input_tokens=1_000,
+            output_tokens=200,
+            cache_read_input_tokens=600,
+            cache_creation_input_tokens=100,
+        )
+        self.gate = gate
+        self.calls = 0
+        self._offline = OfflineProvider()
+
+    async def generate[T: BaseModel](self, request: LLMRequest[T]) -> LLMResponse[T]:
+        self.calls += 1
+        if self.gate is not None:
+            await self.gate.wait()
+        response = await self._offline.generate(request)
+        return LLMResponse(output=response.output, model=self.model, usage=self.usage)

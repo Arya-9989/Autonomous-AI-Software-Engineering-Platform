@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from autoswe.budget import UsageRepository
 from autoswe.models import (
     Job,
     JobEvent,
@@ -23,6 +25,19 @@ from autoswe.pipeline.artifacts import STAGE_ORDER, GeneratedFile
 ACTIVE_STATUSES = (JobStatus.QUEUED, JobStatus.RUNNING)
 
 
+@dataclass(frozen=True, slots=True)
+class Reservation:
+    """The budget a metered job takes when it is created (see :mod:`autoswe.budget`)."""
+
+    period_start: datetime
+    amount: int
+    limit: int | None
+
+
+class BudgetRefusedError(Exception):
+    """The reservation did not fit under the principal's remaining budget."""
+
+
 def _rowcount(result: object) -> int:
     """Rows matched by an UPDATE (``CursorResult.rowcount``; typed loosely by SQLAlchemy)."""
     return int(getattr(result, "rowcount", 0) or 0)
@@ -34,8 +49,29 @@ class JobRepository:
 
     # --- API-facing ----------------------------------------------------------------------------
 
-    async def create(self, *, owner: str, title: str, spec: str, provider: str, model: str) -> Job:
+    async def create(
+        self,
+        *,
+        owner: str,
+        title: str,
+        spec: str,
+        provider: str,
+        model: str,
+        reservation: Reservation | None = None,
+    ) -> Job:
+        """Insert a queued job. With a reservation, the budget compare-and-set runs in the
+        same transaction, so a refused reservation leaves no job behind."""
         job = Job(owner=owner, title=title, spec=spec, provider=provider, model=model)
+        if reservation is not None:
+            usage = UsageRepository(self.session)
+            await usage.ensure(owner, reservation.period_start)
+            if reservation.limit is not None and not await usage.try_reserve(
+                owner, reservation.period_start, reservation.amount, reservation.limit
+            ):
+                await self.session.rollback()
+                raise BudgetRefusedError(owner)
+            job.budget_period_start = reservation.period_start
+            job.tokens_reserved = reservation.amount if reservation.limit is not None else 0
         job.stages = [
             StageRun(name=stage.value, position=index, status=StageStatus.PENDING)
             for index, stage in enumerate(STAGE_ORDER)
@@ -99,6 +135,7 @@ class JobRepository:
             .execution_options(synchronize_session=False)
         )
         if _rowcount(queued) == 1:
+            await self._release(job_id)
             await self.session.execute(
                 update(StageRun).where(StageRun.job_id == job_id).values(status=StageStatus.SKIPPED)
             )
@@ -223,9 +260,13 @@ class JobRepository:
         if _rowcount(result) != 1:
             await self.session.rollback()
             return False
+        await self._release(job_id)
         self.session.add(JobEvent(job_id=job_id, type=event_type, payload=payload))
         await self.session.commit()
         return True
+
+    async def _release(self, job_id: str) -> None:
+        await UsageRepository(self.session).release(job_id)
 
     async def update_job(self, job_id: str, **values: Any) -> None:
         await self.session.execute(
@@ -293,15 +334,17 @@ class JobRepository:
             update(StageRun)
             .where(StageRun.job_id == job_id)
             .values(status=StageStatus.PENDING, summary=None, started_at=None, finished_at=None,
-                    input_tokens=0, output_tokens=0)
+                    input_tokens=0, output_tokens=0, cache_read_input_tokens=0,
+                    cache_creation_input_tokens=0, cost_microusd=0)
         )  # fmt: skip
+        # Job-level token and cost totals are kept: the interrupted attempt was billed, and
+        # the job keeps its budget reservation while it waits to run again.
         await self.session.execute(
             update(Job)
             .where(Job.id == job_id)
             .values(status=JobStatus.QUEUED, current_stage=None, worker_id=None, started_at=None,
-                    heartbeat_at=None, input_tokens=0, output_tokens=0, requirements=None,
-                    architecture=None, validation=None, review=None, test_report=None,
-                    updated_at=utcnow())
+                    heartbeat_at=None, requirements=None, architecture=None, validation=None,
+                    review=None, test_report=None, updated_at=utcnow())
         )  # fmt: skip
         self.session.add(JobEvent(job_id=job_id, type="job.requeued", payload={}))
         await self.session.commit()
@@ -323,12 +366,14 @@ class JobRepository:
             .all()
         )
         for job_id in stale:
-            await self.session.execute(
+            reaped = await self.session.execute(
                 update(Job)
                 .where(Job.id == job_id, Job.status == JobStatus.RUNNING)
                 .values(status=JobStatus.FAILED, error="Worker heartbeat lost; job abandoned.",
                         finished_at=utcnow(), updated_at=utcnow())
             )  # fmt: skip
+            if _rowcount(reaped) == 1:
+                await self._release(job_id)
             self.session.add(
                 JobEvent(job_id=job_id, type="job.failed",
                          payload={"error": "Worker heartbeat lost; job abandoned."})

@@ -16,6 +16,21 @@ jobs:
   backend:
     name: Backend (lint, types, tests)
     runs-on: ubuntu-latest
+    services:
+      # For the budget race test on a database where transactions truly run in parallel.
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: autoswe
+          POSTGRES_PASSWORD: autoswe-ci
+          POSTGRES_DB: autoswe_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U autoswe -d autoswe_test"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      AUTOSWE_TEST_POSTGRES_URL: postgresql+asyncpg://autoswe:autoswe-ci@localhost:5432/autoswe_test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2

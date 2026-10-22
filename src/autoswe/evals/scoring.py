@@ -48,6 +48,9 @@ class FixtureResult(BaseModel):
     model_calls: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    cost_usd: float = 0.0
+    cost_complete: bool = True
     duration_s: float = 0.0
     missing_endpoints: list[str] = Field(default_factory=list)
     missing_entities: list[str] = Field(default_factory=list)

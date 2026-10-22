@@ -10,8 +10,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel
-
 from autoswe import __version__
 from autoswe.evals.fixtures import EvalFixture
 from autoswe.evals.recording import Recording, RecordingProvider, ReplayProvider, Source
@@ -23,25 +21,11 @@ from autoswe.evals.scoring import (
     score,
     suite_means,
 )
-from autoswe.llm.base import LLMError, LLMProvider, LLMRequest, LLMResponse, TokenUsage
+from autoswe.llm.base import LLMError, LLMProvider
+from autoswe.metering import MeteredProvider
 from autoswe.pipeline.agents import PipelineState, run_pipeline
+from autoswe.pricing import PricingTable, usd
 from autoswe.sandbox.backends import Sandbox
-
-
-class _Counting:
-    """Counts calls and tokens of whatever provider the suite runs on."""
-
-    def __init__(self, inner: LLMProvider) -> None:
-        self._inner = inner
-        self.name, self.model = inner.name, inner.model
-        self.calls = 0
-        self.usage = TokenUsage()
-
-    async def generate[T: BaseModel](self, request: LLMRequest[T]) -> LLMResponse[T]:
-        response = await self._inner.generate(request)
-        self.calls += 1
-        self.usage += response.usage
-        return response
 
 
 @dataclass
@@ -63,7 +47,7 @@ class SuiteRun:
 async def run_fixture(
     fixture: EvalFixture, llm: LLMProvider, sandbox: Sandbox | None, repair_rounds: int
 ) -> FixtureResult:
-    counting = _Counting(llm)
+    metered = MeteredProvider(llm, PricingTable.load())
     state = PipelineState(spec=fixture.spec, sandbox=sandbox, max_test_repair_rounds=repair_rounds)
 
     async def quiet(_: str) -> None:
@@ -72,17 +56,21 @@ async def run_fixture(
     started = time.perf_counter()
     error = None
     try:
-        await run_pipeline(state, counting, quiet)
+        await run_pipeline(state, metered, quiet)
     except LLMError as exc:  # a provider failure or a stale recording: scored, not raised
         error = f"{type(exc).__name__}: {exc}"
     if isinstance(llm, ReplayProvider) and error is None and llm.unused_calls:
         error = f"RecordingMismatchError: {llm.unused_calls} recorded call(s) were never made"
     result = score(fixture, state, error)
+    total = metered.meter.total
     return result.model_copy(
         update={
-            "model_calls": counting.calls,
-            "input_tokens": counting.usage.input_tokens,
-            "output_tokens": counting.usage.output_tokens,
+            "model_calls": metered.meter.calls,
+            "input_tokens": total.input_tokens,
+            "output_tokens": total.output_tokens,
+            "cache_read_input_tokens": total.cache_read_input_tokens,
+            "cost_usd": usd(total.cost_microusd),
+            "cost_complete": total.unpriced_calls == 0,
             "duration_s": round(time.perf_counter() - started, 2),
         }
     )
@@ -198,6 +186,11 @@ def report_markdown(run: SuiteRun, thresholds: Thresholds, failures: list[str]) 
         if run.mode == "replay"
         else f"live run against `{run.model}`"
     )
+    calls = sum(r.model_calls for r in run.results)
+    tokens_in = sum(r.input_tokens for r in run.results)
+    tokens_out = sum(r.output_tokens for r in run.results)
+    cost = round(sum(r.cost_usd for r in run.results), 6)
+    complete = all(r.cost_complete for r in run.results)
     lines = [
         "# AutoSWE eval report",
         "",
@@ -207,6 +200,9 @@ def report_markdown(run: SuiteRun, thresholds: Thresholds, failures: list[str]) 
         f"> {run.provenance}",
         "",
         f"Sandbox isolation: {run.sandbox_isolation}",
+        "",
+        f"Model calls: {calls}; tokens: {tokens_in} in, {tokens_out} out; cost: ${cost:.6f}"
+        + ("" if complete else " (incomplete: some models are not in the pricing table)"),
         "",
         "## Suite means",
         "",

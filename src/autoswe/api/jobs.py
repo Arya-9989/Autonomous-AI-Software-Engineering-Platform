@@ -14,9 +14,11 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request, Response, 
 from fastapi.responses import StreamingResponse
 
 from autoswe.api.deps import PrincipalDep, RepositoryDep, ServicesDep
+from autoswe.budget import TokenBudgetExceededError, UsageRepository, period_bounds
+from autoswe.llm.base import is_metered
 from autoswe.llm.registry import UnknownProviderError
 from autoswe.models import Job, JobStatus
-from autoswe.observability import JOBS_SUBMITTED
+from autoswe.observability import BUDGET_REJECTIONS, JOBS_SUBMITTED
 from autoswe.pipeline.artifacts import (
     ArchitectureSpec,
     Requirements,
@@ -25,7 +27,7 @@ from autoswe.pipeline.artifacts import (
 )
 from autoswe.pipeline.naming import kebab
 from autoswe.pipeline.packaging import build_zip
-from autoswe.repository import JobRepository
+from autoswe.repository import BudgetRefusedError, JobRepository, Reservation
 from autoswe.schemas import (
     FileContent,
     FileEntry,
@@ -77,13 +79,30 @@ async def create_job(
             status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"At most {limit} queued or running jobs per API key.",
         )
-    job = await repo.create(
-        owner=principal.name,
-        title=payload.title or _title_from_spec(payload.spec),
-        spec=payload.spec,
-        provider=provider.name,
-        model=provider.model,
-    )
+    reservation = None
+    if is_metered(provider):
+        policy = services.budget
+        budget = policy.limit_for(principal.name)
+        start, _ = period_bounds(policy.period)
+        reservation = Reservation(start, policy.reservation_for(budget), budget)
+    try:
+        job = await repo.create(
+            owner=principal.name,
+            title=payload.title or _title_from_spec(payload.spec),
+            spec=payload.spec,
+            provider=provider.name,
+            model=provider.model,
+            reservation=reservation,
+        )
+    except BudgetRefusedError:
+        BUDGET_REJECTIONS.labels("submit").inc()
+        state = await UsageRepository(repo.session).state(services.budget, principal.name)
+        raise TokenBudgetExceededError(
+            f"Token budget exhausted: {state.used} of {state.limit} tokens used and "
+            f"{state.reserved} reserved by running jobs this {state.period}"
+            + (f"; it resets at {state.resets_at.isoformat()}" if state.resets_at else ""),
+            state,
+        ) from None
     JOBS_SUBMITTED.labels(provider.name).inc()
     services.notifier.notify_queue()
     refreshed = await repo.get(job.id)

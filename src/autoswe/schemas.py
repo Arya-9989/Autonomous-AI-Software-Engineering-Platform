@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from autoswe.models import Job, JobStatus, StageRun, StageStatus
 from autoswe.pipeline.artifacts import STAGE_LABELS, StageName
+from autoswe.pricing import usd
 
 MIN_SPEC_CHARS = 20
 MAX_SPEC_CHARS = 20_000
@@ -54,6 +55,9 @@ class StageOut(BaseModel):
     duration_s: float | None
     input_tokens: int
     output_tokens: int
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    cost_usd: float = 0.0
 
     @classmethod
     def from_model(cls, stage: StageRun) -> StageOut:
@@ -71,6 +75,9 @@ class StageOut(BaseModel):
             duration_s=duration,
             input_tokens=stage.input_tokens,
             output_tokens=stage.output_tokens,
+            cache_read_input_tokens=stage.cache_read_input_tokens,
+            cache_creation_input_tokens=stage.cache_creation_input_tokens,
+            cost_usd=usd(stage.cost_microusd),
         )
 
 
@@ -147,8 +154,17 @@ class JobDetail(JobSummary):
     error: str | None
     started_at: datetime | None
     stages: list[StageOut]
-    input_tokens: int
+    input_tokens: int = Field(description="Total input tokens, cache reads and writes included")
     output_tokens: int
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    cost_usd: float = Field(default=0.0, description="From the pricing table (GET /pricing)")
+    cost_complete: bool = Field(
+        default=True, description="False when some calls used a model the table does not price"
+    )
+    error_code: str | None = Field(
+        default=None, description="Machine-readable failure, e.g. token_budget_exceeded"
+    )
     cancel_requested: bool
     validation: ValidationSummary | None
     tests: TestsSummary | None = Field(
@@ -176,6 +192,11 @@ class JobDetail(JobSummary):
             stages=[StageOut.from_model(stage) for stage in job.stages],
             input_tokens=job.input_tokens,
             output_tokens=job.output_tokens,
+            cache_read_input_tokens=job.cache_read_input_tokens,
+            cache_creation_input_tokens=job.cache_creation_input_tokens,
+            cost_usd=usd(job.cost_microusd),
+            cost_complete=job.unpriced_calls == 0,
+            error_code=job.error_code,
             cancel_requested=job.cancel_requested,
             validation=validation,
             tests=TestsSummary.from_report(job.test_report) if job.test_report else None,
@@ -234,3 +255,38 @@ class ServerInfo(BaseModel):
     providers: list[ProviderOut]
     max_spec_chars: int = MAX_SPEC_CHARS
     min_spec_chars: int = MIN_SPEC_CHARS
+
+
+class BudgetOut(BaseModel):
+    period: str = Field(description="month, day or total")
+    period_start: datetime
+    resets_at: datetime | None
+    limit_tokens: int | None = Field(description="Null when the principal has no budget")
+    used_tokens: int
+    reserved_tokens: int = Field(description="Held by queued and running jobs")
+    remaining_tokens: int | None
+
+
+class UsageTotals(BaseModel):
+    input_tokens: int
+    output_tokens: int
+    cache_read_input_tokens: int
+    cache_creation_input_tokens: int
+    model_calls: int
+    cost_usd: float
+    cost_complete: bool
+    unpriced_calls: int
+
+
+class UsageOut(BaseModel):
+    principal: str
+    budget: BudgetOut
+    usage: UsageTotals
+
+
+class PricingOut(BaseModel):
+    source: str
+    as_of: str
+    currency: str
+    unit: str
+    models: dict[str, dict[str, float]]

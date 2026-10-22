@@ -38,6 +38,7 @@ FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 class AnthropicProvider:
     name = "anthropic"
+    metered = True
 
     def __init__(
         self,
@@ -114,6 +115,7 @@ class AnthropicProvider:
         except anthropic.APIConnectionError as exc:  # includes timeouts
             raise LLMTransientError("Could not reach the Anthropic API") from exc
 
+        billed = _billed(message.usage, message.model)
         usage = _usage(message.usage)
         logger.info(
             "llm call finished",
@@ -149,7 +151,7 @@ class AnthropicProvider:
                 f"{request.agent} output did not match {request.output_type.__name__}: "
                 f"{exc.error_count()} validation error(s)"
             ) from exc
-        return LLMResponse(output=output, model=message.model, usage=usage)
+        return LLMResponse(output=output, model=message.model, usage=usage, billed=billed)
 
 
 # Error types (``error.type`` in an API error body) that are worth resubmitting later.
@@ -175,19 +177,36 @@ def _status_error(exc: anthropic.APIStatusError) -> LLMTransientError | LLMConfi
 
 
 def _usage(usage: Any) -> TokenUsage:
-    """Billed tokens for the call; total input = uncached + cache writes + cache reads.
+    """Billed tokens for the call; total input = uncached + cache writes + cache reads."""
+    total = TokenUsage()
+    for _, entry in _billed(usage, ""):
+        total += entry
+    return total
+
+
+def _billed(usage: Any, model: str) -> tuple[tuple[str, TokenUsage], ...]:
+    """Usage per billed attempt, with the model that served it.
 
     After a server-side fallback the top-level usage only covers the attempt that produced the
     message, while ``usage.iterations`` lists every attempt (the declined one is billed too), so
-    the iterations are summed when present.
+    the iterations are used when present.
     """
-    entries = getattr(usage, "iterations", None) or [usage]
-    input_tokens = output_tokens = 0
+    iterations = getattr(usage, "iterations", None)
+    entries = iterations or [usage]
+    billed = []
     for entry in entries:
-        input_tokens += (
-            (getattr(entry, "input_tokens", 0) or 0)
-            + (getattr(entry, "cache_read_input_tokens", 0) or 0)
-            + (getattr(entry, "cache_creation_input_tokens", 0) or 0)
+        cache_read = getattr(entry, "cache_read_input_tokens", 0) or 0
+        cache_write = getattr(entry, "cache_creation_input_tokens", 0) or 0
+        uncached = getattr(entry, "input_tokens", 0) or 0
+        billed.append(
+            (
+                (getattr(entry, "model", None) if iterations else None) or model,
+                TokenUsage(
+                    input_tokens=uncached + cache_read + cache_write,
+                    output_tokens=getattr(entry, "output_tokens", 0) or 0,
+                    cache_read_input_tokens=cache_read,
+                    cache_creation_input_tokens=cache_write,
+                ),
+            )
         )
-        output_tokens += getattr(entry, "output_tokens", 0) or 0
-    return TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens)
+    return tuple(billed)

@@ -9,10 +9,12 @@ from typing import Annotated
 from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from autoswe.budget import BudgetPolicy
 from autoswe.config import Settings
 from autoswe.db import Database
 from autoswe.events import JobNotifier
 from autoswe.llm.registry import ProviderRegistry
+from autoswe.pricing import PricingTable
 from autoswe.repository import JobRepository
 from autoswe.security import ApiKeyAuthenticator, Principal, extract_api_key
 from autoswe.worker import Worker
@@ -26,6 +28,8 @@ class Services:
     notifier: JobNotifier
     auth: ApiKeyAuthenticator
     worker: Worker | None
+    budget: BudgetPolicy
+    pricing: PricingTable
 
 
 def get_services(request: Request) -> Services:

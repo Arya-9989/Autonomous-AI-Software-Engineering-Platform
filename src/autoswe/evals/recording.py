@@ -90,8 +90,14 @@ def fingerprint(request: LLMRequest[Any]) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+_TOKEN_FIELDS = (
+    "input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens",
+)  # fmt: skip
+
+
 def _usage_dict(usage: TokenUsage) -> dict[str, int]:
-    return {key: int(value) for key, value in dataclasses.asdict(usage).items() if value}
+    """Token counts only: cost is computed from the pricing table at replay time."""
+    return {key: int(getattr(usage, key)) for key in _TOKEN_FIELDS if getattr(usage, key)}
 
 
 def _usage_from(values: dict[str, int]) -> TokenUsage:
@@ -142,6 +148,8 @@ class ReplayProvider:
     def __init__(self, recording: Recording) -> None:
         self.recording = recording
         self.model = recording.model
+        # Replayed offline answers cost nothing; replayed model answers are priced as recorded.
+        self.metered = recording.source != "offline-provider"
         self._next = 0
 
     @property

@@ -107,6 +107,7 @@ def _test_findings(raw: object, findings: list[ReviewFinding]) -> tuple[int, str
 class OfflineProvider:
     name = "offline"
     model = "offline-templates-v1"
+    metered = False  # no model is called: nothing to bill or budget
 
     def __init__(self, delay_s: float = 0.0) -> None:
         # Optional pacing for demos (OFFLINE_DELAY_S); the answer itself does not change.

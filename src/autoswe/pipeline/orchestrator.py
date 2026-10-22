@@ -14,22 +14,24 @@ import time
 from collections.abc import Sequence
 from typing import Any
 
+from autoswe.budget import BudgetGuard, BudgetPolicy, period_bounds
 from autoswe.db import Database
 from autoswe.events import JobNotifier
-from autoswe.llm.base import LLMError, LLMProvider
+from autoswe.llm.base import LLMError, LLMProvider, TokenUsage, is_metered
 from autoswe.llm.registry import ProviderRegistry
 from autoswe.logging_config import job_id_var
-from autoswe.models import JobStatus, StageStatus, utcnow
+from autoswe.metering import MeteredProvider, UsageMeter
+from autoswe.models import Job, JobStatus, StageStatus, utcnow
 from autoswe.observability import (
     JOBS_FINISHED,
     JOBS_RUNNING,
-    LLM_TOKENS,
     STAGE_DURATION,
     VALIDATION_ISSUES,
 )
 from autoswe.pipeline.agents import Agent, PipelineState, StageResult, default_agents
 from autoswe.pipeline.artifacts import STAGE_LABELS, StageName
 from autoswe.pipeline.validation import Limits
+from autoswe.pricing import PricingTable, usd
 from autoswe.repository import JobRepository
 from autoswe.sandbox.backends import Sandbox
 
@@ -54,6 +56,8 @@ class Orchestrator:
         agents: Sequence[Agent] | None = None,
         sandbox: Sandbox | None = None,
         max_test_repair_rounds: int = 2,
+        pricing: PricingTable | None = None,
+        budget: BudgetPolicy | None = None,
     ) -> None:
         self._db = db
         self._registry = registry
@@ -63,6 +67,8 @@ class Orchestrator:
         self._agents = list(agents) if agents is not None else default_agents()
         self._sandbox = sandbox
         self._max_test_repair_rounds = max_test_repair_rounds
+        self._pricing = pricing or PricingTable.load()
+        self._budget = budget or BudgetPolicy(None, {}, "month", 200_000)
 
     # --- persistence helpers ----------------------------------------------------------------------
 
@@ -116,7 +122,7 @@ class Orchestrator:
                 logger.warning("claimed job vanished")
                 return JobStatus.FAILED
             provider_name = job.provider
-            llm = self._registry.get(job.provider)
+            llm = self._metered(job, self._registry.get(job.provider))
             state = PipelineState(
                 spec=job.spec,
                 limits=self._limits,
@@ -141,7 +147,37 @@ class Orchestrator:
         JOBS_FINISHED.labels(provider_name, status.value).inc()
         return status
 
+    def _metered(self, job: Job, provider: LLMProvider) -> MeteredProvider:
+        """The job's provider, priced and budgeted. Totals continue from what the job already
+        spent (a requeued job keeps its earlier attempt's usage)."""
+        meter = UsageMeter(
+            TokenUsage(
+                input_tokens=job.input_tokens,
+                output_tokens=job.output_tokens,
+                cache_read_input_tokens=job.cache_read_input_tokens,
+                cache_creation_input_tokens=job.cache_creation_input_tokens,
+                cost_microusd=job.cost_microusd,
+                unpriced_calls=job.unpriced_calls,
+            )
+        )
+        guard = None
+        if is_metered(provider):
+            guard = BudgetGuard(
+                self._db,
+                self._budget,
+                job_id=job.id,
+                principal=job.owner,
+                period_start=job.budget_period_start or period_bounds(self._budget.period)[0],
+                reserved=job.tokens_reserved,
+            )
+        return MeteredProvider(provider, self._pricing, meter, guard)
+
+    async def _persist_usage(self, job_id: str, llm: LLMProvider) -> None:
+        if isinstance(llm, MeteredProvider):
+            await self._update_job(job_id, **_usage_columns(llm.meter.total))
+
     async def _run_stages(self, job_id: str, state: PipelineState, llm: LLMProvider) -> JobStatus:
+        meter = llm.meter if isinstance(llm, MeteredProvider) else UsageMeter()
         for agent in self._agents:
             stage = agent.stage
             if await self._cancel_requested(job_id):
@@ -155,19 +191,25 @@ class Orchestrator:
                 await self._emit(job_id, "stage.log", stage=_stage.value, message=message)
 
             started = time.perf_counter()
+            before = meter.total
             try:
                 result = await agent.run(state, llm, log)
             except LLMError as exc:
                 self._observe(stage, llm.name, "error", started)
-                return await self._fail(job_id, stage, f"{STAGE_LABELS[stage]}: {exc}")
+                await self._persist_usage(job_id, llm)
+                code = getattr(exc, "code", None)
+                return await self._fail(job_id, stage, f"{STAGE_LABELS[stage]}: {exc}", code=code)
             except Exception as exc:
                 logger.exception("stage crashed", extra={"stage": stage.value})
                 self._observe(stage, llm.name, "error", started)
+                await self._persist_usage(job_id, llm)
                 return await self._fail(
                     job_id, stage, f"{STAGE_LABELS[stage]} crashed ({type(exc).__name__})"
                 )
             duration = self._observe(stage, llm.name, "ok", started)
-            await self._persist_stage(job_id, stage, state, result, duration, llm.name)
+            await self._persist_stage(
+                job_id, stage, state, result, duration, meter.total - before, meter.total
+            )
 
         return await self._succeed(job_id, state)
 
@@ -183,17 +225,13 @@ class Orchestrator:
         state: PipelineState,
         result: StageResult,
         duration: float,
-        provider: str,
+        usage: TokenUsage,
+        total: TokenUsage,
     ) -> None:
         async with self._db.session() as session:
             repo = JobRepository(session)
             await repo.upsert_files(job_id, (state.files[p] for p in result.files), stage.value)
-            job = await repo.get(job_id)
-            assert job is not None
-            artifacts: dict[str, Any] = {
-                "input_tokens": job.input_tokens + result.usage.input_tokens,
-                "output_tokens": job.output_tokens + result.usage.output_tokens,
-            }
+            artifacts: dict[str, Any] = _usage_columns(total)
             if stage is StageName.ANALYZE and state.requirements:
                 artifacts["requirements"] = state.requirements.model_dump()
                 artifacts["project_name"] = state.requirements.project_name[:64]
@@ -212,19 +250,23 @@ class Orchestrator:
                 status=StageStatus.SUCCEEDED,
                 finished_at=utcnow(),
                 summary=result.summary,
-                input_tokens=result.usage.input_tokens,
-                output_tokens=result.usage.output_tokens,
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                cache_read_input_tokens=usage.cache_read_input_tokens,
+                cache_creation_input_tokens=usage.cache_creation_input_tokens,
+                cost_microusd=usage.cost_microusd,
             )
-        LLM_TOKENS.labels(provider, "input").inc(result.usage.input_tokens)
-        LLM_TOKENS.labels(provider, "output").inc(result.usage.output_tokens)
         await self._emit(
             job_id,
             "stage.completed",
             stage=stage.value,
             summary=result.summary,
             duration_s=round(duration, 3),
-            input_tokens=result.usage.input_tokens,
-            output_tokens=result.usage.output_tokens,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            cache_read_input_tokens=usage.cache_read_input_tokens,
+            cache_creation_input_tokens=usage.cache_creation_input_tokens,
+            cost_usd=usd(usage.cost_microusd),
             files=list(result.files),
         )
 
@@ -249,7 +291,9 @@ class Orchestrator:
         logger.info("job succeeded", extra={"files": len(state.files)})
         return JobStatus.SUCCEEDED
 
-    async def _fail(self, job_id: str, stage: StageName | None, message: str) -> JobStatus:
+    async def _fail(
+        self, job_id: str, stage: StageName | None, message: str, *, code: str | None = None
+    ) -> JobStatus:
         if stage is not None:
             await self._update_stage(
                 job_id, stage, status=StageStatus.FAILED, finished_at=utcnow(), summary=message
@@ -260,9 +304,10 @@ class Orchestrator:
         await self._finish(
             job_id,
             "job.failed",
-            {"error": message},
+            {"error": message, "code": code},
             status=JobStatus.FAILED,
             error=message,
+            error_code=code,
             current_stage=None,
             finished_at=utcnow(),
         )
@@ -296,3 +341,14 @@ class Orchestrator:
                 self._notifier.notify_job(job_id)
         except Exception:
             logger.exception("could not record interruption")
+
+
+def _usage_columns(total: TokenUsage) -> dict[str, int]:
+    return {
+        "input_tokens": total.input_tokens,
+        "output_tokens": total.output_tokens,
+        "cache_read_input_tokens": total.cache_read_input_tokens,
+        "cache_creation_input_tokens": total.cache_creation_input_tokens,
+        "cost_microusd": total.cost_microusd,
+        "unpriced_calls": total.unpriced_calls,
+    }

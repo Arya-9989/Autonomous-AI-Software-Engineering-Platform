@@ -4,6 +4,8 @@
 * ``autoswe migrate``  - apply database migrations and exit
 * ``autoswe generate`` - run the pipeline once, locally, and write the project to a directory
 * ``autoswe sandbox-runner`` - the sandbox runner service (the only process with Docker access)
+* ``autoswe usage``    - token, budget and cost ledger per principal (reads the database)
+* ``autoswe eval``     - run or record the eval suite
 """
 
 from __future__ import annotations
@@ -72,6 +74,35 @@ async def _generate(spec: str, out: Path, provider_name: str | None, sandbox: st
     return 0 if report is not None and report.passed and tests_ok else 1
 
 
+async def _usage(settings: Settings, principal: str | None, all_periods: bool) -> int:
+    from autoswe.budget import BudgetPolicy, UsageRepository, period_bounds  # noqa: PLC0415
+    from autoswe.db import Database  # noqa: PLC0415
+    from autoswe.pricing import usd  # noqa: PLC0415
+
+    policy = BudgetPolicy.from_settings(settings)
+    current, _ = period_bounds(policy.period)
+    db = Database(settings.database_url)
+    try:
+        async with db.session() as session:
+            rows = await UsageRepository(session).list(principal)
+    finally:
+        await db.dispose()
+    rows = [row for row in rows if all_periods or row.period_start == current]
+    header = f"{'principal':<20} {'period':<10} {'used':>12} {'reserved':>10} {'limit':>12} "
+    print(header + f"{'calls':>7} {'cost USD':>12}")  # noqa: T201
+    for row in rows:
+        limit = policy.limit_for(row.principal)
+        cost = f"{usd(row.cost_microusd):.6f}" + ("*" if row.unpriced_calls else "")
+        print(  # noqa: T201
+            f"{row.principal:<20} {row.period_start.date().isoformat():<10} "
+            f"{row.used_tokens:>12} {row.reserved_tokens:>10} "
+            f"{'unlimited' if limit is None else limit:>12} {row.model_calls:>7} {cost:>12}"
+        )
+    if any(row.unpriced_calls for row in rows):
+        print("* includes calls to models missing from the pricing table")  # noqa: T201
+    return 0
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="autoswe")
     sub = parser.add_subparsers(dest="command")
@@ -89,6 +120,9 @@ def main(argv: list[str] | None = None) -> None:
         help="Run the generated tests (default: SANDBOX_BACKEND, which defaults to none)",
     )
     sub.add_parser("sandbox-runner", help="Run the sandbox runner service (needs Docker access)")
+    usage = sub.add_parser("usage", help="Token, budget and cost ledger per principal")
+    usage.add_argument("--principal", default=None, help="Only this principal")
+    usage.add_argument("--all-periods", action="store_true", help="Not just the current period")
     evaluate = sub.add_parser("eval", help="Run or record the eval suite (fixtures in evals/)")
     add_eval_arguments(evaluate)
     args = parser.parse_args(argv)
@@ -111,6 +145,11 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(asyncio.run(_generate(spec, args.out, args.provider, args.sandbox)))
 
     settings = get_settings()
+    if args.command == "usage":
+        configure_logging("WARNING", "console")
+        if settings.db_auto_migrate:
+            upgrade_to_head(settings.database_url)
+        sys.exit(asyncio.run(_usage(settings, args.principal, args.all_periods)))
     if args.command == "migrate":
         configure_logging(settings.log_level, settings.log_format)
         upgrade_to_head(settings.database_url)

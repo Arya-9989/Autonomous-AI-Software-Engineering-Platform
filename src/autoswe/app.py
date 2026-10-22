@@ -13,8 +13,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from autoswe import __version__
-from autoswe.api import jobs, system
+from autoswe.api import jobs, system, usage
 from autoswe.api.deps import Services
+from autoswe.budget import BudgetPolicy, TokenBudgetExceededError
 from autoswe.config import Settings, get_settings
 from autoswe.db import Database
 from autoswe.events import JobNotifier
@@ -24,6 +25,7 @@ from autoswe.migrations.runner import upgrade_to_head
 from autoswe.observability import ObservabilityMiddleware, content_security_policy
 from autoswe.pipeline.orchestrator import Orchestrator
 from autoswe.pipeline.validation import Limits
+from autoswe.pricing import PricingTable
 from autoswe.sandbox.factory import build_sandbox
 from autoswe.security import ApiKeyAuthenticator
 from autoswe.web import html_pages, inline_script_hashes, mount_frontend
@@ -38,6 +40,8 @@ def build_services(
     db = Database(settings.database_url, echo=settings.db_echo)
     registry = registry or build_registry(settings)
     notifier = JobNotifier()
+    pricing = PricingTable.load(settings.pricing_file)
+    budget = BudgetPolicy.from_settings(settings)
     orchestrator = Orchestrator(
         db,
         registry,
@@ -50,6 +54,8 @@ def build_services(
         max_repair_rounds=settings.max_repair_rounds,
         sandbox=build_sandbox(settings),
         max_test_repair_rounds=settings.sandbox_max_repair_rounds,
+        pricing=pricing,
+        budget=budget,
     )
     services = Services(
         settings=settings,
@@ -58,6 +64,8 @@ def build_services(
         notifier=notifier,
         auth=ApiKeyAuthenticator.from_settings(settings),
         worker=None,
+        budget=budget,
+        pricing=pricing,
     )
     return services, orchestrator
 
@@ -147,6 +155,17 @@ def create_app(
             content={"detail": "Request validation failed", "errors": errors},
         )
 
+    @app.exception_handler(TokenBudgetExceededError)
+    async def budget_handler(_: Request, exc: TokenBudgetExceededError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            content={
+                "detail": str(exc),
+                "code": exc.code,
+                "budget": exc.state.as_dict() if exc.state else None,
+            },
+        )
+
     @app.exception_handler(Exception)
     async def unhandled_handler(_: Request, exc: Exception) -> JSONResponse:
         logger.exception("unhandled error", exc_info=exc)
@@ -157,6 +176,7 @@ def create_app(
 
     app.include_router(system.router)
     app.include_router(jobs.router)
+    app.include_router(usage.router)
 
     if static_dir is not None:
         mount_frontend(app, static_dir)

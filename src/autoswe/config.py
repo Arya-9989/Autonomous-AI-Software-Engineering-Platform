@@ -130,7 +130,21 @@ class Settings(SandboxSettings):
     anthropic_max_retries: int = Field(default=2, ge=0, le=10)
     anthropic_server_fallbacks: bool = True
 
-    @field_validator("anthropic_effort", "anthropic_api_key", "static_dir", mode="before")
+    # --- token budgets and cost ------------------------------------------------------------------
+    # Tokens (input, cache included, plus output) each principal may spend per period. Empty =
+    # unlimited. TOKEN_BUDGETS overrides it per principal: "alice:2000000,ci:500000".
+    token_budget_default: int | None = Field(default=None, ge=0)
+    token_budgets: str = ""
+    token_budget_period: Literal["month", "day", "total"] = "month"  # noqa: S105 - not a secret
+    # Reserved when a job is submitted and topped up in chunks of this size while it runs, so
+    # concurrent jobs cannot all pass a check that only one of them fits under.
+    job_token_reservation: int = Field(default=200_000, ge=1_000)
+    pricing_file: Path | None = None
+
+    @field_validator(
+        "anthropic_effort", "anthropic_api_key", "static_dir", "token_budget_default",
+        "pricing_file", mode="before",
+    )  # fmt: skip
     @classmethod
     def _blank_is_unset(cls, value: object) -> object:
         # `.env.example` ships `ANTHROPIC_EFFORT=` and friends: an empty value means "not set".
@@ -153,6 +167,23 @@ class Settings(SandboxSettings):
                 "(or set AUTH_DISABLED=true for local development)."
             )
         return self
+
+    @model_validator(mode="after")
+    def _check_budgets(self) -> Settings:
+        self.parsed_token_budgets()
+        return self
+
+    def parsed_token_budgets(self) -> dict[str, int]:
+        """``{principal: tokens per period}`` parsed from ``TOKEN_BUDGETS``."""
+        budgets: dict[str, int] = {}
+        for entry in filter(None, (part.strip() for part in self.token_budgets.split(","))):
+            principal, sep, amount = entry.partition(":")
+            if not sep or not principal.strip() or not amount.strip().isdecimal():
+                raise ValueError(
+                    "Each TOKEN_BUDGETS entry must look like 'principal:tokens', e.g. alice:500000"
+                )
+            budgets[principal.strip()] = int(amount.strip())
+        return budgets
 
     def parsed_api_keys(self) -> dict[str, str]:
         """Return ``{key: principal}`` parsed from ``API_KEYS``."""

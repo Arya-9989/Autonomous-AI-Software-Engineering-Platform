@@ -66,6 +66,18 @@ LLM_TOKENS = Counter(
     ["provider", "direction"],
     registry=REGISTRY,
 )
+LLM_COST = Counter(
+    "autoswe_llm_cost_usd_total",
+    "Cost of LLM calls priced from the pricing table (unpriced models excluded)",
+    ["provider", "model"],
+    registry=REGISTRY,
+)
+BUDGET_REJECTIONS = Counter(
+    "autoswe_budget_rejections_total",
+    "Jobs refused at submission or stopped while running by a token budget",
+    ["where"],
+    registry=REGISTRY,
+)
 VALIDATION_ISSUES = Counter(
     "autoswe_validation_issues_total",
     "Issues found by deterministic validation of generated projects",
