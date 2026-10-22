@@ -17,6 +17,7 @@ from autoswe.api.deps import PrincipalDep, RepositoryDep, ServicesDep
 from autoswe.budget import TokenBudgetExceededError, UsageRepository, period_bounds
 from autoswe.llm.base import is_metered
 from autoswe.llm.registry import UnknownProviderError
+from autoswe.logging_config import request_id_var
 from autoswe.models import Job, JobStatus
 from autoswe.observability import BUDGET_REJECTIONS, JOBS_SUBMITTED
 from autoswe.pipeline.artifacts import (
@@ -37,6 +38,7 @@ from autoswe.schemas import (
     JobSummary,
     language_for,
 )
+from autoswe.tracing import current_context_carrier
 
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
 
@@ -93,6 +95,8 @@ async def create_job(
             provider=provider.name,
             model=provider.model,
             reservation=reservation,
+            request_id=request_id_var.get(),
+            trace_context=current_context_carrier(),
         )
     except BudgetRefusedError:
         BUDGET_REJECTIONS.labels("submit").inc()

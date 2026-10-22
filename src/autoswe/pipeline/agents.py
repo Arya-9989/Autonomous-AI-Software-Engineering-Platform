@@ -29,6 +29,7 @@ from autoswe.pipeline.docs import architecture_markdown
 from autoswe.pipeline.validation import Limits, path_key, sanitize_files, validate_project
 from autoswe.sandbox.backends import Sandbox
 from autoswe.sandbox.models import SandboxResult, SandboxStatus
+from autoswe.tracing import mark_error, tracer
 
 Emit = Callable[[str], Awaitable[None]]
 
@@ -308,6 +309,7 @@ class Reviewer:
                     output_type=FileBundle,
                     context={"repair": repair.model_dump()},
                     effort="high",
+                    metadata={"repair.kind": "validation", "repair.round": round_number},
                 )
             )
             usage += response.usage
@@ -375,7 +377,7 @@ class Reviewer:
         for attempt in range(rounds + 1):
             label = "" if attempt == 0 else f" (after repair round {attempt})"
             await emit(f"Running the test suite in the {state.sandbox.name} sandbox{label}")
-            result = await state.sandbox.run(list(state.files.values()))
+            result = await _traced_sandbox_run(state, attempt)
             state.test_runs.append(result)
             await emit(result.describe())
             if result.status is SandboxStatus.PASSED or not result.repairable:
@@ -419,6 +421,29 @@ class Reviewer:
             repaired.update(accepted)
             state.validate()
         return usage
+
+
+async def _traced_sandbox_run(state: PipelineState, attempt: int) -> SandboxResult:
+    assert state.sandbox is not None
+    with tracer().start_as_current_span(
+        "autoswe.sandbox.run",
+        attributes={"autoswe.sandbox.backend": state.sandbox.name,
+                    "autoswe.repair.round": attempt, "autoswe.sandbox.files": len(state.files)},
+    ) as span:  # fmt: skip
+        result = await state.sandbox.run(list(state.files.values()))
+        tests = result.tests
+        span.set_attribute("autoswe.sandbox.status", result.status.value)
+        span.set_attribute("autoswe.sandbox.duration_s", result.duration_s)
+        span.set_attribute("autoswe.sandbox.isolation", result.isolation)
+        if result.limit:
+            span.set_attribute("autoswe.sandbox.limit", result.limit)
+        if tests is not None:
+            span.set_attribute("autoswe.tests.collected", tests.collected)
+            span.set_attribute("autoswe.tests.passed", tests.passed)
+            span.set_attribute("autoswe.tests.failed", tests.failed + tests.errors)
+        if result.status is SandboxStatus.ERROR:
+            mark_error(span, result.message, "sandbox_error")
+        return result
 
 
 def _owned_by(allowed: set[str]) -> Callable[[str], bool]:

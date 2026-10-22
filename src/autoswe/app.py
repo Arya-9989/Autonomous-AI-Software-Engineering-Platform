@@ -22,12 +22,13 @@ from autoswe.events import JobNotifier
 from autoswe.llm.registry import ProviderRegistry, build_registry
 from autoswe.logging_config import configure_logging
 from autoswe.migrations.runner import upgrade_to_head
-from autoswe.observability import ObservabilityMiddleware, content_security_policy
+from autoswe.observability import ObservabilityMiddleware, content_security_policy, untraced
 from autoswe.pipeline.orchestrator import Orchestrator
 from autoswe.pipeline.validation import Limits
 from autoswe.pricing import PricingTable
 from autoswe.sandbox.factory import build_sandbox
 from autoswe.security import ApiKeyAuthenticator
+from autoswe.tracing import configure_tracing
 from autoswe.web import html_pages, inline_script_hashes, mount_frontend
 from autoswe.worker import Worker
 
@@ -76,6 +77,7 @@ def create_app(
     """Build the ASGI app. ``registry`` lets tests inject scripted LLM providers."""
     settings = settings or get_settings()
     configure_logging(settings.log_level, settings.log_format)
+    tracer_provider = configure_tracing("autoswe")  # no-op unless OTEL_* asks for export
     services, orchestrator = build_services(settings, registry)
 
     @asynccontextmanager
@@ -109,6 +111,8 @@ def create_app(
             if worker is not None:
                 await worker.stop()
             await services.db.dispose()
+            if tracer_provider is not None:
+                tracer_provider.shutdown()  # flush spans still in the batch queue
 
     app = FastAPI(
         title="Autonomous AI Software Engineering Platform",
@@ -123,6 +127,9 @@ def create_app(
         openapi_url="/api/openapi.json",
         debug=settings.debug,
         lifespan=lifespan,
+        # HTTP SERVER spans come from FastAPI itself (they continue an incoming traceparent);
+        # the per-dependency/endpoint/serialization sub-spans are left out to keep traces lean.
+        telemetry={"operation_spans": False, "exclude": untraced},
     )
     app.state.services = services
     app.state.orchestrator = orchestrator

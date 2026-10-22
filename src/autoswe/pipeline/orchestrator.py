@@ -14,6 +14,9 @@ import time
 from collections.abc import Sequence
 from typing import Any
 
+from opentelemetry import propagate
+from opentelemetry.trace import Span, SpanKind
+
 from autoswe.budget import BudgetGuard, BudgetPolicy, period_bounds
 from autoswe.db import Database
 from autoswe.events import JobNotifier
@@ -34,6 +37,7 @@ from autoswe.pipeline.validation import Limits
 from autoswe.pricing import PricingTable, usd
 from autoswe.repository import JobRepository
 from autoswe.sandbox.backends import Sandbox
+from autoswe.tracing import mark_error, tracer
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +114,35 @@ class Orchestrator:
 
     # --- pipeline --------------------------------------------------------------------------------
 
+    async def _trace_parent(self, job_id: str) -> dict[str, Any]:
+        try:
+            async with self._db.session() as session:
+                job = await JobRepository(session).get(job_id)
+        except Exception:  # tracing must never decide whether a job runs
+            return {}
+        return dict(job.trace_context or {}) if job is not None else {}
+
     async def run(self, job_id: str) -> JobStatus:
+        """Run one job inside an ``autoswe.job`` span that continues the submission's trace."""
+        with tracer().start_as_current_span(
+            "autoswe.job",
+            context=propagate.extract(await self._trace_parent(job_id)),
+            kind=SpanKind.CONSUMER,
+            attributes={"autoswe.job.id": job_id},
+            record_exception=False,
+            set_status_on_exception=False,
+        ) as span:
+            try:
+                status = await self._run(job_id, span)
+            except asyncio.CancelledError:
+                span.set_attribute("autoswe.job.interrupted", True)
+                raise
+            span.set_attribute("autoswe.job.status", status.value)
+            if status is JobStatus.FAILED:
+                mark_error(span, "job failed", "job_failed")
+            return status
+
+    async def _run(self, job_id: str, span: Span) -> JobStatus:
         token = job_id_var.set(job_id)
         heartbeat = asyncio.create_task(self._heartbeat_loop(job_id), name=f"heartbeat-{job_id}")
         JOBS_RUNNING.inc()
@@ -123,6 +155,10 @@ class Orchestrator:
                 return JobStatus.FAILED
             provider_name = job.provider
             llm = self._metered(job, self._registry.get(job.provider))
+            span.set_attributes({
+                "autoswe.job.owner": job.owner, "autoswe.provider": job.provider,
+                "gen_ai.request.model": llm.model, "autoswe.request_id": job.request_id or "",
+            })  # fmt: skip
             state = PipelineState(
                 spec=job.spec,
                 limits=self._limits,
@@ -132,6 +168,15 @@ class Orchestrator:
             )
             await self._emit(job_id, "job.started", provider=llm.name, model=llm.model)
             status = await self._run_stages(job_id, state, llm)
+            total = llm.meter.total
+            span.set_attributes({
+                "gen_ai.usage.input_tokens": total.input_tokens,
+                "gen_ai.usage.output_tokens": total.output_tokens,
+                "autoswe.cost_usd": usd(total.cost_microusd),
+                "autoswe.llm.calls": llm.meter.calls,
+            })  # fmt: skip
+            if state.test_result is not None:
+                span.set_attribute("autoswe.tests.status", state.test_result.status.value)
         except asyncio.CancelledError:
             await asyncio.shield(self._handle_interrupt(job_id))
             raise
@@ -190,28 +235,61 @@ class Orchestrator:
             async def log(message: str, _stage: StageName = stage) -> None:
                 await self._emit(job_id, "stage.log", stage=_stage.value, message=message)
 
-            started = time.perf_counter()
-            before = meter.total
-            try:
-                result = await agent.run(state, llm, log)
-            except LLMError as exc:
-                self._observe(stage, llm.name, "error", started)
-                await self._persist_usage(job_id, llm)
-                code = getattr(exc, "code", None)
-                return await self._fail(job_id, stage, f"{STAGE_LABELS[stage]}: {exc}", code=code)
-            except Exception as exc:
-                logger.exception("stage crashed", extra={"stage": stage.value})
-                self._observe(stage, llm.name, "error", started)
-                await self._persist_usage(job_id, llm)
-                return await self._fail(
-                    job_id, stage, f"{STAGE_LABELS[stage]} crashed ({type(exc).__name__})"
-                )
-            duration = self._observe(stage, llm.name, "ok", started)
-            await self._persist_stage(
-                job_id, stage, state, result, duration, meter.total - before, meter.total
-            )
+            with tracer().start_as_current_span(
+                f"autoswe.stage {stage.value}",
+                attributes={"autoswe.stage": stage.value, "autoswe.job.id": job_id},
+                record_exception=False,
+                set_status_on_exception=False,
+            ) as span:
+                failed = await self._run_stage(job_id, agent, state, llm, meter, log, span)
+            if failed is not None:
+                return failed
 
         return await self._succeed(job_id, state)
+
+    async def _run_stage(
+        self,
+        job_id: str,
+        agent: Agent,
+        state: PipelineState,
+        llm: LLMProvider,
+        meter: UsageMeter,
+        log: Any,
+        span: Span,
+    ) -> JobStatus | None:
+        """One agent; returns the job's terminal status if the stage failed it."""
+        stage = agent.stage
+        started = time.perf_counter()
+        before = meter.total
+        try:
+            result = await agent.run(state, llm, log)
+        except LLMError as exc:
+            self._observe(stage, llm.name, "error", started)
+            await self._persist_usage(job_id, llm)
+            code = getattr(exc, "code", None)
+            mark_error(span, exc, code or type(exc).__name__)
+            return await self._fail(job_id, stage, f"{STAGE_LABELS[stage]}: {exc}", code=code)
+        except Exception as exc:
+            logger.exception("stage crashed", extra={"stage": stage.value})
+            self._observe(stage, llm.name, "error", started)
+            await self._persist_usage(job_id, llm)
+            mark_error(span, exc)
+            return await self._fail(
+                job_id, stage, f"{STAGE_LABELS[stage]} crashed ({type(exc).__name__})"
+            )
+        duration = self._observe(stage, llm.name, "ok", started)
+        usage = meter.total - before
+        span.set_attributes({
+            "autoswe.stage.duration_s": round(duration, 3),
+            "autoswe.stage.files": len(result.files),
+            "gen_ai.usage.input_tokens": usage.input_tokens,
+            "gen_ai.usage.output_tokens": usage.output_tokens,
+            "gen_ai.usage.cache_read.input_tokens": usage.cache_read_input_tokens,
+            "gen_ai.usage.cache_write.input_tokens": usage.cache_creation_input_tokens,
+            "autoswe.cost_usd": usd(usage.cost_microusd),
+        })  # fmt: skip
+        await self._persist_stage(job_id, stage, state, result, duration, usage, meter.total)
+        return None
 
     def _observe(self, stage: StageName, provider: str, outcome: str, started: float) -> float:
         duration = time.perf_counter() - started

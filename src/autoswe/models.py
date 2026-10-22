@@ -123,6 +123,9 @@ class Job(Base):
     tokens_reserved: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
     budget_period_start: Mapped[datetime | None] = mapped_column(UTCDateTime)
     error_code: Mapped[str | None] = mapped_column(String(64))
+    # The submitting request's ID and W3C trace context: the worker's job span continues it.
+    request_id: Mapped[str | None] = mapped_column(String(64))
+    trace_context: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     worker_id: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)

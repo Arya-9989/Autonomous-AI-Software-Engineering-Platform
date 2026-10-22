@@ -81,12 +81,15 @@ class LLMResponse[T: BaseModel]:
     # Usage per billed attempt and the model that served it. A server-side fallback bills the
     # declined attempt too, possibly on another model; empty means "all of `usage` on `model`".
     billed: tuple[tuple[str, TokenUsage], ...] = ()
+    # HTTP requests the call took, retries included (None when the provider cannot tell).
+    http_attempts: int | None = None
 
 
 class LLMError(Exception):
     """Base class for provider failures surfaced to the pipeline."""
 
     retryable: bool = False
+    http_attempts: int | None = None  # set by providers that count their HTTP requests
 
 
 class LLMTransientError(LLMError):

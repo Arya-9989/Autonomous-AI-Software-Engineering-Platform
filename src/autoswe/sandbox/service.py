@@ -21,11 +21,12 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 
 from autoswe.config import SandboxSettings
 from autoswe.logging_config import configure_logging
-from autoswe.observability import ObservabilityMiddleware
+from autoswe.observability import ObservabilityMiddleware, untraced
 from autoswe.pipeline.artifacts import GeneratedFile
 from autoswe.pipeline.validation import Limits, sanitize_files
 from autoswe.sandbox.backends import DockerSandbox, LocalProcessSandbox, Sandbox
 from autoswe.sandbox.models import SandboxResult
+from autoswe.tracing import configure_tracing
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,7 @@ def create_runner_app(  # noqa: PLR0915 - the app factory defines its handlers i
 ) -> FastAPI:
     settings = settings or RunnerSettings()  # the token comes from the env
     configure_logging(settings.log_level, settings.log_format)
+    configure_tracing("autoswe-sandbox-runner")  # joins the job's trace via traceparent
     backend = sandbox or build_runner_sandbox(settings)
     token = settings.sandbox_runner_token.get_secret_value().encode()
     gate = _Gate(settings.sandbox_max_concurrent_runs, settings.sandbox_runner_max_queue)
@@ -102,7 +104,7 @@ def create_runner_app(  # noqa: PLR0915 - the app factory defines its handlers i
 
     app = FastAPI(
         title="AutoSWE sandbox runner", docs_url=None, redoc_url=None, openapi_url=None,
-        lifespan=lifespan,
+        lifespan=lifespan, telemetry={"operation_spans": False, "exclude": untraced},
     )  # fmt: skip
     app.add_middleware(ObservabilityMiddleware)
 

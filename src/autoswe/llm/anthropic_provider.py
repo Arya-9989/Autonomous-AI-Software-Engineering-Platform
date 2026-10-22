@@ -12,10 +12,14 @@ Each agent call is one streamed Messages request with:
 
 from __future__ import annotations
 
+import dataclasses
 import logging
+from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from typing import Any
 
 import anthropic
+import httpx2
 import pydantic
 from anthropic import transform_schema
 from pydantic import BaseModel
@@ -23,6 +27,7 @@ from pydantic import BaseModel
 from autoswe.config import Effort, Settings
 from autoswe.llm.base import (
     LLMConfigurationError,
+    LLMError,
     LLMOutputError,
     LLMRefusalError,
     LLMRequest,
@@ -34,6 +39,21 @@ from autoswe.llm.base import (
 logger = logging.getLogger(__name__)
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
+
+# HTTP requests made by the call in progress; the SDK retries inside one call, so this counts
+# the original request plus every retry.
+_ATTEMPTS: ContextVar[list[int] | None] = ContextVar("anthropic_http_attempts", default=None)
+
+
+async def _count_attempt(_request: httpx2.Request) -> None:
+    counter = _ATTEMPTS.get()
+    if counter is not None:
+        counter[0] += 1
+
+
+def http_event_hooks() -> dict[str, list[Callable[[httpx2.Request], Awaitable[None]]]]:
+    """Hooks for an ``httpx2.AsyncClient`` passed to the SDK, so retries are visible."""
+    return {"request": [_count_attempt]}
 
 
 class AnthropicProvider:
@@ -57,7 +77,10 @@ class AnthropicProvider:
         self._effort_override = effort_override
         self._server_fallbacks = server_fallbacks
         self._client = client or anthropic.AsyncAnthropic(
-            api_key=api_key, timeout=timeout_s, max_retries=max_retries
+            api_key=api_key,
+            timeout=timeout_s,
+            max_retries=max_retries,
+            http_client=anthropic.DefaultAsyncHttpxClient(event_hooks=http_event_hooks()),
         )
 
     @classmethod
@@ -96,6 +119,18 @@ class AnthropicProvider:
         return params
 
     async def generate[T: BaseModel](self, request: LLMRequest[T]) -> LLMResponse[T]:
+        counter = [0]
+        token = _ATTEMPTS.set(counter)
+        try:
+            response = await self._generate(request)
+        except LLMError as exc:
+            exc.http_attempts = counter[0] or None
+            raise
+        finally:
+            _ATTEMPTS.reset(token)
+        return dataclasses.replace(response, http_attempts=counter[0] or None)
+
+    async def _generate[T: BaseModel](self, request: LLMRequest[T]) -> LLMResponse[T]:
         params = self.build_params(request)
         try:
             async with self._client.beta.messages.stream(**params) as stream:

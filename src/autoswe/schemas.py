@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from autoswe.models import Job, JobStatus, StageRun, StageStatus
 from autoswe.pipeline.artifacts import STAGE_LABELS, StageName
 from autoswe.pricing import usd
+from autoswe.tracing import trace_id_of
 
 MIN_SPEC_CHARS = 20
 MAX_SPEC_CHARS = 20_000
@@ -165,6 +166,10 @@ class JobDetail(JobSummary):
     error_code: str | None = Field(
         default=None, description="Machine-readable failure, e.g. token_budget_exceeded"
     )
+    request_id: str | None = Field(default=None, description="X-Request-ID of the submission")
+    trace_id: str | None = Field(
+        default=None, description="OpenTelemetry trace of the submission and the job's run"
+    )
     cancel_requested: bool
     validation: ValidationSummary | None
     tests: TestsSummary | None = Field(
@@ -197,6 +202,8 @@ class JobDetail(JobSummary):
             cost_usd=usd(job.cost_microusd),
             cost_complete=job.unpriced_calls == 0,
             error_code=job.error_code,
+            request_id=job.request_id,
+            trace_id=trace_id_of(job.trace_context),
             cancel_requested=job.cancel_requested,
             validation=validation,
             tests=TestsSummary.from_report(job.test_report) if job.test_report else None,

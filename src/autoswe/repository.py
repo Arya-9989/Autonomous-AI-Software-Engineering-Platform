@@ -58,10 +58,13 @@ class JobRepository:
         provider: str,
         model: str,
         reservation: Reservation | None = None,
+        request_id: str | None = None,
+        trace_context: dict[str, str] | None = None,
     ) -> Job:
         """Insert a queued job. With a reservation, the budget compare-and-set runs in the
         same transaction, so a refused reservation leaves no job behind."""
-        job = Job(owner=owner, title=title, spec=spec, provider=provider, model=model)
+        job = Job(owner=owner, title=title, spec=spec, provider=provider, model=model,
+                  request_id=request_id, trace_context=trace_context or None)  # fmt: skip
         if reservation is not None:
             usage = UsageRepository(self.session)
             await usage.ensure(owner, reservation.period_start)

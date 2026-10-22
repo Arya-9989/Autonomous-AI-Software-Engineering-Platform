@@ -41,6 +41,10 @@ services:
       SANDBOX_BACKEND: ${SANDBOX_BACKEND:-remote}
       SANDBOX_RUNNER_URL: http://sandbox-runner:8080
       SANDBOX_RUNNER_TOKEN: ${SANDBOX_RUNNER_TOKEN:-local-demo-runner-token-change-me}
+      # Tracing is off unless an OTLP endpoint is set; with `--profile tracing`, use
+      # OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318 (UI on http://localhost:16686).
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_SERVICE_NAME: autoswe
     networks: [default, sandbox]
     read_only: true
     tmpfs:
@@ -68,6 +72,8 @@ services:
       SANDBOX_DOCKER_RUNTIME: ${SANDBOX_DOCKER_RUNTIME:-}
       DOCKER_CONFIG: /tmp/.docker
       LOG_FORMAT: json
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_SERVICE_NAME: autoswe-sandbox-runner
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     # The socket's group: 0 on Docker Desktop; `stat -c %g /var/run/docker.sock` on Linux.
@@ -92,6 +98,16 @@ services:
     network_mode: none
     read_only: true
     restart: "no"
+
+  # Optional trace viewer. Start with:
+  #   OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318 docker compose --profile tracing up --build
+  jaeger:
+    image: jaegertracing/jaeger:2.12.0@sha256:4c8423cd8fa8b727bd632f0acda2cc39118f21a4bdcef322a6c9ddbeb6dcd424
+    profiles: [tracing]
+    ports:
+      - "${JAEGER_UI_PORT:-16686}:16686"
+    networks: [default, sandbox]
+    restart: unless-stopped
 
 networks:
   sandbox:

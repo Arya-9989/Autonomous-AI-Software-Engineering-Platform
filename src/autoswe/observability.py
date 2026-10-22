@@ -9,6 +9,7 @@ import uuid
 from collections.abc import Iterable
 from typing import Any
 
+from opentelemetry import trace
 from prometheus_client import (
     GC_COLLECTOR,
     PLATFORM_COLLECTOR,
@@ -86,6 +87,14 @@ VALIDATION_ISSUES = Counter(
 )
 
 _SAFE_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+_UNTRACED = frozenset({"/healthz", "/readyz", "/metrics"})
+
+
+def untraced(scope: Any) -> bool:
+    """For ``FastAPI(telemetry={"exclude": ...})``: probes and scrapes make no spans."""
+    return scope.get("path") in _UNTRACED
+
+
 _access_log = logging.getLogger("autoswe.access")
 
 SECURITY_HEADERS: tuple[tuple[bytes, bytes], ...] = (
@@ -151,25 +160,37 @@ class ObservabilityMiddleware:
                 status_holder["latency"] = time.perf_counter() - start
             await send(message)
 
+        method = scope.get("method", "GET")
+        path = str(scope.get("path", ""))
+        # FastAPI's native telemetry wraps the app in a SERVER span (W3C traceparent included);
+        # tag it so a trace can be found from the X-Request-ID a client saw.
+        span = trace.get_current_span()
+        if span.is_recording():
+            span.set_attribute("autoswe.request_id", request_id)
         try:
             await self.app(scope, receive, send_wrapper)
         finally:
             route = scope.get("route")
             template = getattr(route, "path", None) or "unmatched"
-            method = scope.get("method", "GET")
-            status = str(status_holder["status"])
-            latency = status_holder.get("latency", time.perf_counter() - start)
-            HTTP_REQUESTS.labels(method, template, status).inc()
-            HTTP_LATENCY.labels(method, template).observe(latency)
-            if template not in {"/healthz", "/readyz", "/metrics"}:
-                _access_log.info(
-                    "request",
-                    extra={
-                        "method": method,
-                        "path": scope.get("path"),
-                        "route": template,
-                        "status": int(status),
-                        "duration_ms": round(latency * 1000, 2),
-                    },
-                )
+            self._record(method, template, status_holder, start, path)
             request_id_var.reset(token)
+
+    @staticmethod
+    def _record(
+        method: str, template: str, status_holder: dict[str, Any], start: float, path: str
+    ) -> None:
+        status = str(status_holder["status"])
+        latency = status_holder.get("latency", time.perf_counter() - start)
+        HTTP_REQUESTS.labels(method, template, status).inc()
+        HTTP_LATENCY.labels(method, template).observe(latency)
+        if template not in _UNTRACED:
+            _access_log.info(
+                "request",
+                extra={
+                    "method": method,
+                    "path": path,
+                    "route": template,
+                    "status": int(status),
+                    "duration_ms": round(latency * 1000, 2),
+                },
+            )
