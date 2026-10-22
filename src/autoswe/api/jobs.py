@@ -23,6 +23,7 @@ from autoswe.pipeline.artifacts import (
     ReviewReport,
     ValidationReport,
 )
+from autoswe.pipeline.naming import kebab
 from autoswe.pipeline.packaging import build_zip
 from autoswe.repository import JobRepository
 from autoswe.schemas import (
@@ -201,7 +202,10 @@ async def download_archive(job_id: str, principal: PrincipalDep, repo: Repositor
             status.HTTP_409_CONFLICT, detail="Archive is available once the job succeeds"
         )
     files = await repo.list_files(job_id)
-    name = job.project_name or "project"
+    # project_name comes from the model: kebab() keeps the header to ASCII letters, digits and
+    # hyphens (a quote, CR/LF or non-Latin-1 character would break or fail the header), and it
+    # matches the folder name inside the archive.
+    name = kebab(job.project_name or "project")
     archive = await asyncio.to_thread(build_zip, name, [(f.path, f.content) for f in files])
     return Response(
         content=archive,

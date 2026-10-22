@@ -7,7 +7,27 @@ from typing import Any
 
 import pytest
 
+from autoswe.repository import JobRepository
 from tests.conftest import ALICE, LIBRARY_SPEC, AppHarness, HarnessFactory
+
+
+@pytest.mark.parametrize(
+    ("project_name", "filename"),
+    [('Café "Orders" API', "caf-orders-api"), ("訂單 系統", "project"), ("x\r\ny", "x-y")],
+)
+async def test_archive_name_is_header_safe(
+    harness: AppHarness, project_name: str, filename: str
+) -> None:
+    """project_name is model output: quotes, CR/LF and non-Latin-1 text must not reach headers."""
+    job_id = (await harness.submit())["id"]
+    await harness.wait_for(job_id, {"succeeded"})
+    async with harness.app.state.services.db.session() as session:
+        await JobRepository(session).update_job(job_id, project_name=project_name)
+    response = await harness.client.get(f"/api/v1/jobs/{job_id}/archive", headers=ALICE)
+    assert response.status_code == 200
+    assert response.headers["content-disposition"] == f'attachment; filename="{filename}.zip"'
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        assert {name.split("/", 1)[0] for name in archive.namelist()} == {filename}
 
 
 async def test_job_runs_to_completion_with_stage_progress(harness: AppHarness) -> None:
