@@ -2,3 +2,5 @@ dist
 node_modules
 package-lock.json
 src/landing/sample.json
+playwright-report
+test-results

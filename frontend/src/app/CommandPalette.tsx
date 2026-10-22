@@ -86,7 +86,7 @@ export function CommandPalette({
                   New project
                 </Item>
                 <Item
-                  value="toggle theme appearance dark light"
+                  value="switch appearance theme dark light mode"
                   icon={theme === "dark" ? <Sun /> : <Moon />}
                   onSelect={() => run(toggleTheme)}
                 >

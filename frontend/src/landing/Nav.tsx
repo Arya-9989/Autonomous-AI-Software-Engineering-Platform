@@ -70,7 +70,7 @@ function useActiveSection(): string {
         const first = SECTIONS.find((s) => (visible.get(s.id) ?? 0) > 0);
         if (first) setActive(first.id);
       },
-      { rootMargin: "-52px 0px -55% 0px", threshold: [0, 0.01, 0.5, 1] },
+      { rootMargin: "-80px 0px -55% 0px", threshold: [0, 0.01, 0.5, 1] },
     );
     elements.forEach((element) => observer.observe(element));
     return () => observer.disconnect();

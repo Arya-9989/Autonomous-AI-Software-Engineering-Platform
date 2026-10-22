@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUp } from "lucide-react";
-import { m } from "motion/react";
 import { useEffect, useId, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
@@ -63,18 +62,13 @@ export function NewJobPage() {
 
   return (
     <div className="mx-auto max-w-[880px] px-4 pt-12 pb-20 sm:px-6 md:pt-20">
-      <m.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.45, ease: [0.25, 0.1, 0.25, 1] }}
-        className="text-center"
-      >
+      <div className="text-center">
         <h1 className="t-headline text-ink">What should we build?</h1>
         <p className="t-body-lg mx-auto mt-4 max-w-[600px] text-ink-2">
           Describe the service in plain English. Name entities and fields if you like, for example{" "}
           <span className="font-mono text-[0.85em] text-ink">Book(title, year:int)</span>.
         </p>
-      </m.div>
+      </div>
 
       <form
         onSubmit={submit}

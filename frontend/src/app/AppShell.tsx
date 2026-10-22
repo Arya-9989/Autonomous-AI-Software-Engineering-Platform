@@ -97,12 +97,14 @@ export default function AppShell({ notFound = false }: { notFound?: boolean }) {
                 type="button"
                 onClick={() => setPaletteOpen(true)}
                 className="ml-auto flex h-9 min-w-11 items-center gap-2 rounded-full bg-surface px-3 text-[14px] tracking-[-0.016em] text-ink-2 ring-1 ring-hairline transition-colors hover:text-ink hover:ring-hairline-strong pointer-coarse:h-11 md:ml-4 md:w-72"
-                aria-label="Search jobs and commands"
                 aria-keyshortcuts={isMac ? "Meta+K" : "Control+K"}
               >
                 <Search className="size-4 shrink-0" aria-hidden />
-                <span className="hidden md:inline">Search jobs and commands</span>
-                <kbd className="ml-auto hidden rounded-md bg-canvas px-1.5 py-0.5 font-mono text-[11px] text-ink-2 shadow-[0_0_0_1px_var(--hairline)] md:inline">
+                <span className="sr-only md:not-sr-only">Search jobs and commands</span>
+                <kbd
+                  aria-hidden
+                  className="ml-auto hidden rounded-md bg-canvas px-1.5 py-0.5 font-mono text-[11px] text-ink-2 shadow-[0_0_0_1px_var(--hairline)] md:inline"
+                >
                   {isMac ? "⌘K" : "Ctrl K"}
                 </kbd>
               </button>

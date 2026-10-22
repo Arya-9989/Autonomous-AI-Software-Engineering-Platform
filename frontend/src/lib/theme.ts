@@ -20,8 +20,12 @@ function stored(): Theme | null {
 }
 
 function apply(theme: Theme): void {
-  document.documentElement.classList.toggle("dark", theme === "dark");
+  // Switch instantly: suspend colour transitions for a frame so nothing cross-fades mid-way.
+  const root = document.documentElement;
+  root.classList.add("theme-switching");
+  root.classList.toggle("dark", theme === "dark");
   notify();
+  requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove("theme-switching")));
 }
 
 // Follow the OS until the reader picks a theme explicitly (public/theme-init.js sets the first paint).

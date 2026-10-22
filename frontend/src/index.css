@@ -334,6 +334,11 @@
   }
 }
 
+.theme-switching,
+.theme-switching * {
+  transition: none !important;
+}
+
 /* Extends a small control's hit area to at least 44px without changing how it looks. */
 .hit-44 {
   position: relative;
