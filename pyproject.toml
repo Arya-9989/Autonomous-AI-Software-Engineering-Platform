@@ -34,6 +34,7 @@ dev = [
     "mypy>=1.15",
     "pytest>=8.3",
     "pytest-asyncio>=0.25",
+    "pytest-cov>=6.0",
     "ruff>=0.9",
     "types-pyyaml>=6.0",
 ]
@@ -93,3 +94,12 @@ markers = [
     "docker: runs real sandbox containers (needs Docker and the autoswe-sandbox image)",
 ]
 filterwarnings = ["error::DeprecationWarning:autoswe.*"]
+
+[tool.coverage.run]
+source = ["autoswe"]
+
+[tool.coverage.report]
+# Measured at 93.45% when this gate was added (92.8% before the roadmap's wave 1).
+fail_under = 93
+show_missing = true
+skip_covered = true
