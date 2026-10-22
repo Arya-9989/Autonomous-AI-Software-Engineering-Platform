@@ -1,41 +1,6 @@
+import { CHECK_COUNT, GROUPS } from "./checks";
+import { CountUp } from "./CountUp";
 import { sample } from "./sample";
-
-/** The checks in src/autoswe/pipeline/validation.py, grouped as the reviewer runs them. */
-const GROUPS: { title: string; items: string[] }[] = [
-  {
-    title: "Parsed, not pattern-matched",
-    items: ["Python with ast", "YAML with PyYAML", "Terraform with python-hcl2", "JSON and TOML"],
-  },
-  {
-    title: "Kubernetes",
-    items: [
-      "Liveness and readiness probes",
-      "Resource limits",
-      "Non-root containers",
-      "No privileged containers",
-    ],
-  },
-  {
-    title: "Dockerfile",
-    items: ["Pinned base images", "Non-root final user", "A HEALTHCHECK"],
-  },
-  {
-    title: "GitHub Actions",
-    items: ["A trigger and jobs with steps", "runs-on for every job", "Version-pinned actions"],
-  },
-  {
-    title: "Safety",
-    items: ["Secret scanner", "Path-safety and size limits", "Unsafe paths rejected before storage"],
-  },
-  {
-    title: "Completeness",
-    items: [
-      "README, manifest, Dockerfile, tests, CI",
-      "Kubernetes and Terraform present",
-      "Every designed endpoint found in the code",
-    ],
-  },
-];
 
 export function Validation() {
   return (
@@ -71,16 +36,17 @@ export function Validation() {
 
         <div className="mt-16 grid gap-10 md:grid-cols-2 md:gap-16" data-reveal>
           <div>
-            <dl className="grid grid-cols-3 gap-4">
+            <dl data-testid="validation-stats" className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-4">
               {[
                 ["Files checked", sample.validation.files_checked],
+                ["Checks", CHECK_COUNT],
                 ["Errors", sample.validation.errors],
                 ["Warnings", sample.validation.warnings],
               ].map(([label, value]) => (
                 <div key={label} className="flex flex-col-reverse">
                   <dt className="mt-1 text-[14px] leading-5 text-ink-2">{label}</dt>
-                  <dd className="text-[48px] leading-[52px] font-semibold tracking-[-0.01em] text-ink tabular-nums md:text-[64px] md:leading-[68px]">
-                    {value}
+                  <dd className="text-[48px] leading-[52px] font-semibold tracking-[-0.01em] text-ink tabular-nums md:text-[56px] md:leading-[60px]">
+                    <CountUp value={Number(value)} />
                   </dd>
                 </div>
               ))}

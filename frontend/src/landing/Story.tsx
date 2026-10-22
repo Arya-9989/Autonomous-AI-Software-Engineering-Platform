@@ -1,85 +1,137 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
-import { PipelineRail } from "../components/PipelineRail";
-import { cx } from "../lib/cx";
 import { AGENTS } from "../lib/stages";
-import type { StageStatus } from "../lib/types";
 import { sample } from "./sample";
 import { StageVisual } from "./StageVisuals";
+import { COPY_COUNT, StepCopy } from "./StoryCopy";
+import { CODE_FILES, REVIEW_LINES } from "./storyModel";
+import { StoryPinned } from "./StoryPinned";
+import { useHighlightedLines } from "./useStoryHighlight";
 
-const COPY: { title: string; body: string }[] = [
-  {
-    title: "Reads the spec. Names the things.",
-    body: "The requirements analyst turns your paragraph into a typed Requirements artifact: entities and their fields, user stories, functional and non-functional requirements, assumptions and what is out of scope.",
-  },
-  {
-    title: "Designs before it writes.",
-    body: "The architect chooses components and a tech stack, lists every endpoint, plans the deployment and records its decisions as ADRs. The code that follows is traced back to this design.",
-  },
-  {
-    title: "Writes the service. And its tests.",
-    body: "The code generator produces a FastAPI service with SQLAlchemy models, Pydantic schemas, one router per entity and a pytest suite that runs against an isolated database.",
-  },
-  {
-    title: "Ready to ship, not just to run.",
-    body: "The DevOps engineer adds a multi-stage, non-root Dockerfile with a health check, a GitHub Actions workflow, Kubernetes manifests and Terraform for ECR and ECS Fargate.",
-  },
-  {
-    title: "Checks everything. Repairs what fails.",
-    body: "The reviewer parses every file, applies security and operability rules, sends errors back to the code generator for one bounded repair round, then writes the review.",
-  },
-];
+const LAST = AGENTS.length - 1;
 
-function StepLog({ index }: { index: number }) {
-  const stage = sample.stages[index]!;
+/**
+ * Each agent's copy beside what it really produced: the prerendered story, kept by phones, short
+ * or narrow windows, reduced motion and readers without JavaScript. Every word visible, no motion
+ * beyond the page's one-shot reveals.
+ */
+function StoryStatic({ onHeight }: { onHeight: (height: number) => void }) {
+  const list = useRef<HTMLOListElement>(null);
+  const highlighted = useHighlightedLines(list);
+  // The pinned story takes exactly this height, so swapping one for the other moves nothing
+  // below it: no layout shift, and an anchor the reader jumped to stays put.
+  useLayoutEffect(() => {
+    const element = list.current;
+    if (!element) return;
+    onHeight(element.offsetHeight);
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => onHeight(element.offsetHeight));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [onHeight]);
+  const extra: Record<number, ReactNode> = {
+    2: <CodeCard path={CODE_FILES[0].path} html={highlighted.html[CODE_FILES[0].path]} />,
+    3: <CodeCard path={CODE_FILES[1].path} html={highlighted.html[CODE_FILES[1].path]} />,
+    4: <ReviewChecks />,
+  };
   return (
-    <div className="mt-6 space-y-1 font-mono text-[12px] leading-[18px] md:text-[13px] md:leading-5">
-      {stage.logs.map((line) => (
-        <p key={line} className="text-ink-2">
-          <span aria-hidden className="mr-2 text-ink-3">
-            ›
-          </span>
-          {line}
-        </p>
+    <ol ref={list} className="story-static wrap mt-8 lg:mt-16">
+      {Array.from({ length: COPY_COUNT }, (_, index) => (
+        <li
+          key={index}
+          className="grid items-center gap-x-14 gap-y-8 py-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)] lg:py-16"
+        >
+          <div data-reveal>
+            <StepCopy index={index} />
+          </div>
+          <div data-reveal className="grid min-w-0 gap-4">
+            {index === LAST && extra[index]}
+            <StageVisual index={index} />
+            {index !== LAST && extra[index]}
+          </div>
+        </li>
       ))}
-      <p className="text-ink">
-        <span aria-hidden className="mr-2 text-ok">
-          ✓
-        </span>
-        {stage.summary}
+    </ol>
+  );
+}
+
+/** A file the agent wrote, complete, in a scrollable frame (the static story's code view). */
+function CodeCard({ path, html }: { path: string; html?: string }) {
+  const stage = CODE_FILES.find((f) => f.path === path)!.stage;
+  const file = sample.showcase.find((f) => f.path === path)!;
+  return (
+    <div className="theme-dark min-w-0 overflow-hidden rounded-[20px] bg-[#0b0b0c] ring-1 ring-white/10">
+      <p className="flex h-10 items-center gap-2 border-b border-white/10 px-5 t-eyebrow text-ink-2">
+        <span className="text-ink normal-case">{path}</span> · {AGENTS[stage]!.label}
       </p>
+      <div
+        className="code-view scrollbar-thin max-h-[360px] overflow-auto"
+        tabIndex={0}
+        role="region"
+        aria-label={`${path}, written by the ${AGENTS[stage]!.label.toLowerCase()}`}
+      >
+        {html ? (
+          <div dangerouslySetInnerHTML={{ __html: html }} />
+        ) : (
+          <pre className="px-5 text-ink">{file.content}</pre>
+        )}
+      </div>
     </div>
   );
 }
 
-/**
- * "How it works": the five agents pin beside the copy and light up one by one as you scroll,
- * each showing what it really produced for the library spec.
- */
-export function Story() {
-  const steps = useRef<(HTMLLIElement | null)[]>([]);
-  const [active, setActive] = useState(0);
-
-  useEffect(() => {
-    if (typeof IntersectionObserver === "undefined") return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) setActive(Number((entry.target as HTMLElement).dataset.step));
-        }
-      },
-      { rootMargin: "-48% 0px -48% 0px" },
-    );
-    steps.current.forEach((step) => step && observer.observe(step));
-    return () => observer.disconnect();
-  }, []);
-
-  const states: StageStatus[] = AGENTS.map((_, index) =>
-    index < active ? "succeeded" : index === active ? "running" : "pending",
+/** What the reviewer ran over the project, in its order (the static story's review view). */
+function ReviewChecks() {
+  return (
+    <div className="theme-dark rounded-[20px] bg-[#0b0b0c] p-5 ring-1 ring-white/10 md:p-6">
+      <p className="t-eyebrow mb-3 text-ink-2">Reviewer · checks</p>
+      <ul className="font-mono text-[12px] leading-[22px]">
+        {REVIEW_LINES.map((line) => (
+          <li
+            key={line.tool}
+            className="grid grid-cols-[minmax(0,128px)_minmax(0,1fr)_auto] items-center gap-3"
+          >
+            <span className="text-accent-ink">{line.tool}</span>
+            <span className="truncate text-ink-2">{line.detail}</span>
+            <span className="text-ok">
+              <span aria-hidden>✓</span>
+              <span className="sr-only">passed</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
+}
+
+const PINNED_MEDIA =
+  "(min-width: 1200px) and (min-height: 800px) and (prefers-reduced-motion: no-preference)";
+
+function subscribe(onChange: () => void): () => void {
+  const media = window.matchMedia(PINNED_MEDIA);
+  media.addEventListener("change", onChange);
+  return () => media.removeEventListener("change", onChange);
+}
+
+/**
+ * Whether this window gets the pinned story: large enough to hold it, and motion allowed. False
+ * when prerendering and on first hydration, so the HTML always carries the static story.
+ */
+function usePinned(): boolean {
+  return useSyncExternalStore(
+    subscribe,
+    () => window.matchMedia(PINNED_MEDIA).matches,
+    () => false,
+  );
+}
+
+/** "How it works": five agents, one spec, every handoff typed. */
+export function Story() {
+  const pinned = usePinned();
+  const [height, onHeight] = useState<number | undefined>(undefined);
 
   return (
-    <section id="how-it-works" aria-labelledby="how-title" className="bg-canvas py-24 md:py-40">
+    <section id="how-it-works" aria-labelledby="how-title" className="story bg-canvas py-24 md:py-40">
       <div className="wrap" data-reveal>
         <p className="t-eyebrow text-accent-ink">How it works</p>
         <h2 id="how-title" className="t-section mt-3 max-w-[760px] text-ink">
@@ -92,66 +144,13 @@ export function Story() {
           </blockquote>
         </figure>
       </div>
-
-      <div className="wrap mt-8 grid gap-x-12 lg:mt-0 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)]">
-        <ol>
-          {COPY.map((copy, index) => {
-            const agent = AGENTS[index]!;
-            return (
-              <li
-                key={agent.name}
-                ref={(element) => {
-                  steps.current[index] = element;
-                }}
-                data-step={index}
-                className="flex flex-col justify-center py-12 lg:min-h-[78vh] lg:py-0"
-              >
-                <div data-reveal className="relative lg:pl-7">
-                  <span
-                    aria-hidden
-                    className={cx(
-                      "absolute top-0 bottom-0 left-0 hidden w-0.5 rounded-full bg-accent-ink transition-opacity duration-500 ease-apple lg:block",
-                      active === index ? "opacity-100" : "opacity-0",
-                    )}
-                  />
-                  <p className="t-eyebrow text-ink-2">
-                    <span className={cx(active === index ? "text-accent-ink" : "")}>
-                      {String(index + 1).padStart(2, "0")}
-                    </span>{" "}
-                    · {agent.label}
-                  </p>
-                  <h3 className="t-tile mt-3 text-ink">{copy.title}</h3>
-                  <p className="t-body-lg mt-4 text-ink-2">{copy.body}</p>
-                  <StepLog index={index} />
-                </div>
-                <div className="mt-8 lg:hidden">
-                  <StageVisual index={index} />
-                </div>
-              </li>
-            );
-          })}
-        </ol>
-
-        <div className="hidden lg:block">
-          <div className="sticky top-[84px] flex h-[calc(100vh-112px)] max-h-[760px] min-h-[600px] flex-col rounded-[28px] bg-surface-2 p-8">
-            <PipelineRail states={states} highlight={active} caption="Agent shown alongside the text" />
-            <div className="relative mt-8 flex-1">
-              {AGENTS.map((_, index) => (
-                <div
-                  key={index}
-                  aria-hidden={active !== index}
-                  className={cx(
-                    "absolute inset-0 flex flex-col overflow-hidden transition-[opacity,transform] duration-500 ease-apple [justify-content:safe_center]",
-                    active === index ? "opacity-100" : "pointer-events-none translate-y-2 opacity-0",
-                  )}
-                >
-                  <StageVisual index={index} />
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
+      {pinned ? (
+        <Suspense fallback={<StoryStatic onHeight={onHeight} />}>
+          <StoryPinned height={height} />
+        </Suspense>
+      ) : (
+        <StoryStatic onHeight={onHeight} />
+      )}
     </section>
   );
 }

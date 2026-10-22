@@ -1,4 +1,5 @@
 import { Ban, Check, X } from "lucide-react";
+import { useState } from "react";
 
 import { cx } from "../lib/cx";
 import { AGENTS } from "../lib/stages";
@@ -34,6 +35,16 @@ export function PipelineRail({
 }) {
   const node = size === "lg" ? "size-12 md:size-14" : "size-10";
   const icon = size === "lg" ? "size-5 md:size-6" : "size-[18px]";
+  // Which stages changed state since the last render: only those icons spring in, so nothing
+  // animates on first paint (or in the prerendered HTML).
+  const key = states.join(" ");
+  const [previous, setPrevious] = useState(key);
+  const [changed, setChanged] = useState<boolean[]>([]);
+  if (key !== previous) {
+    const before = previous.split(" ");
+    setChanged(AGENTS.map((_, i) => (states[i] ?? "pending") !== (before[i] ?? "pending")));
+    setPrevious(key);
+  }
   return (
     <ol className={cx("grid grid-cols-5", className)} aria-label={caption ?? "Pipeline stages"}>
       {AGENTS.map((agent, index) => {
@@ -59,11 +70,14 @@ export function PipelineRail({
                 />
               </span>
             )}
+            {/* A stage that starts working springs forward a little; its icon springs in when it
+                starts, finishes or fails (CSS spring, bounce 0.18; instant with reduced motion). */}
             <span
               className={cx(
-                "relative grid shrink-0 place-items-center rounded-full transition-[background-color,color,box-shadow,opacity] duration-300 ease-apple",
+                "rail-node relative grid shrink-0 place-items-center rounded-full",
                 node,
                 dim && "opacity-40",
+                status === "running" && "scale-[1.08]",
                 status === "succeeded" && "bg-ink text-canvas",
                 status === "running" &&
                   "bg-accent text-white shadow-[0_0_0_6px_var(--accent-soft),0_0_32px_var(--accent-glow)]",
@@ -72,15 +86,17 @@ export function PipelineRail({
                 status === "pending" && "bg-canvas text-ink-3 ring-1 ring-hairline-strong ring-inset",
               )}
             >
-              {status === "succeeded" ? (
-                <Check className={icon} strokeWidth={2.5} aria-hidden />
-              ) : status === "failed" ? (
-                <X className={icon} strokeWidth={2.5} aria-hidden />
-              ) : status === "skipped" ? (
-                <Ban className={icon} aria-hidden />
-              ) : (
-                <Icon className={icon} strokeWidth={1.75} aria-hidden />
-              )}
+              <span key={status} className={cx("grid place-items-center", changed[index] && "rail-pop")}>
+                {status === "succeeded" ? (
+                  <Check className={icon} strokeWidth={2.5} aria-hidden />
+                ) : status === "failed" ? (
+                  <X className={icon} strokeWidth={2.5} aria-hidden />
+                ) : status === "skipped" ? (
+                  <Ban className={icon} aria-hidden />
+                ) : (
+                  <Icon className={icon} strokeWidth={1.75} aria-hidden />
+                )}
+              </span>
               {status === "running" && (
                 <span
                   aria-hidden

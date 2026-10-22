@@ -1,15 +1,30 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FolderGit2, RotateCw } from "lucide-react";
-import { NavLink } from "react-router";
+import type { MouseEvent } from "react";
+import { NavLink, useLocation, useNavigate } from "react-router";
 
 import { Skeleton } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { cx } from "../lib/cx";
 import { formatRelative } from "../lib/format";
+import { canMorph, morph } from "../lib/viewTransition";
 import { TERMINAL } from "../lib/types";
 import { StatusDot } from "./StatusBadge";
 
 export function JobList() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const queryClient = useQueryClient();
+  // Fetch a job as the pointer or focus reaches its card, so the page usually renders at once
+  // and the card can morph into its header (P7) instead of into a skeleton.
+  const prefetch = (id: string) =>
+    void queryClient.prefetchQuery({ queryKey: ["job", id], queryFn: () => api.getJob(id), staleTime: 5000 });
+  const open = (event: MouseEvent<HTMLAnchorElement>, to: string) => {
+    const plain = event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
+    if (!plain || event.defaultPrevented || location.pathname === to || !canMorph()) return;
+    event.preventDefault();
+    morph(event.currentTarget, () => void navigate(to));
+  };
   const jobs = useQuery({
     queryKey: ["jobs"],
     queryFn: () => api.listJobs(),
@@ -64,6 +79,9 @@ export function JobList() {
           <li key={job.id}>
             <NavLink
               to={`/app/jobs/${job.id}`}
+              onClick={(event) => open(event, `/app/jobs/${job.id}`)}
+              onPointerEnter={() => prefetch(job.id)}
+              onFocus={() => prefetch(job.id)}
               className={({ isActive }) =>
                 cx(
                   "group block rounded-xl px-3 py-2 transition-colors duration-200 ease-apple",
@@ -72,8 +90,13 @@ export function JobList() {
               }
             >
               <div className="flex items-center gap-2">
-                <StatusDot status={job.status} />
-                <span className="truncate text-[14px] leading-5 font-medium tracking-[-0.016em] text-ink">
+                <span data-vt="job-status" className="inline-flex">
+                  <StatusDot status={job.status} />
+                </span>
+                <span
+                  data-vt={job.project_name ? "job-name" : "job-title"}
+                  className="truncate text-[14px] leading-5 font-medium tracking-[-0.016em] text-ink"
+                >
                   {job.project_name ?? job.title}
                 </span>
                 <span className="sr-only">, {job.status}</span>

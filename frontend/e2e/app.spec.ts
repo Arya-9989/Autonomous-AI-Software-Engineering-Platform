@@ -182,3 +182,97 @@ test.describe("studio details", () => {
     expect(new Set(await colours())).toEqual(new Set(["#ffffff"]));
   });
 });
+
+test.describe("studio motion", () => {
+  /** Counts View Transitions the page starts, and records the names in play when it captures. */
+  async function watchTransitions(page: Page): Promise<void> {
+    await page.addInitScript(() => {
+      const w = window as unknown as { __vt: { count: number; names: string[] } };
+      w.__vt = { count: 0, names: [] };
+      const original = document.startViewTransition?.bind(document);
+      if (!original) return;
+      document.startViewTransition = ((update: () => void) => {
+        w.__vt.count += 1;
+        w.__vt.names = [...document.querySelectorAll<HTMLElement>("[style*='view-transition-name']")].map(
+          (el) => el.style.viewTransitionName,
+        );
+        return original(update);
+      }) as typeof document.startViewTransition;
+    });
+  }
+  const transitions = (page: Page) =>
+    page.evaluate(() => (window as unknown as { __vt: { count: number; names: string[] } }).__vt);
+
+  async function finishedJob(page: Page): Promise<string> {
+    // Earlier tests may still hold the three active jobs a key may run (HTTP 429): wait for a slot.
+    let id = "";
+    await expect
+      .poll(
+        async () => {
+          const response = await page.request.post("/api/v1/jobs", { data: { spec: LIBRARY_SPEC } });
+          if (response.status() === 202) id = ((await response.json()) as { id: string }).id;
+          return response.status();
+        },
+        { timeout: 30_000, intervals: [500] },
+      )
+      .toBe(202);
+    await expect
+      .poll(
+        async () =>
+          ((await (await page.request.get(`/api/v1/jobs/${id}`)).json()) as { status: string }).status,
+        { timeout: 30_000 },
+      )
+      .toBe("succeeded");
+    return id;
+  }
+
+  test("a job card morphs into its page (shared-element view transition)", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const id = await finishedJob(page);
+    await watchTransitions(page);
+    await page.goto("/app");
+    const card = page.getByRole("navigation", { name: "Recent jobs" }).locator(`a[href="/app/jobs/${id}"]`);
+    await card.hover();
+    await card.click();
+    await expect(page).toHaveURL(new RegExp(`/app/jobs/${id}$`));
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+    const seen = await transitions(page);
+    expect(seen.count).toBe(1);
+    // The card's status and name were the shared elements leaving the list.
+    expect(seen.names.sort()).toEqual(["job-name", "job-status"]);
+    // Names exist only during the transition: none is left behind to clash with the next one.
+    await expect
+      .poll(() => page.evaluate(() => document.querySelectorAll("[style*='view-transition-name:']").length))
+      .toBe(0);
+  });
+
+  test("with reduced motion a job card opens its page instantly", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const id = await finishedJob(page);
+    await watchTransitions(page);
+    await page.goto("/app");
+    await page.getByRole("navigation", { name: "Recent jobs" }).locator(`a[href="/app/jobs/${id}"]`).click();
+    await expect(page).toHaveURL(new RegExp(`/app/jobs/${id}$`));
+    expect((await transitions(page)).count).toBe(0);
+  });
+
+  test("the working stage springs forward and settles when it finishes", async ({ page }) => {
+    await startJob(page);
+    const timeline = page.getByRole("list", { name: "Pipeline progress" });
+    const working = timeline.locator("li", { hasText: ": working" }).locator(".rail-node");
+    await expect(working).toHaveCount(1);
+    // Scaled up towards the spring target (1.08) while that agent works...
+    await expect
+      .poll(() => working.evaluate((el) => parseFloat(getComputedStyle(el).scale) || 1))
+      .toBeGreaterThan(1.04);
+    // ...and every node back at rest (the spring settled) once the job is done.
+    await expect(timeline.getByText("Reviewer: done")).toBeAttached();
+    await expect
+      .poll(() =>
+        timeline
+          .locator(".rail-node")
+          .evaluateAll((nodes) => nodes.map((el) => parseFloat(getComputedStyle(el).scale) || 1)),
+      )
+      .toEqual([1, 1, 1, 1, 1]);
+  });
+});

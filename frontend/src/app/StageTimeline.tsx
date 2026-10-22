@@ -3,7 +3,7 @@ import { AnimatePresence, m } from "motion/react";
 import { PipelineRail } from "../components/PipelineRail";
 import { cx } from "../lib/cx";
 import { formatDuration, formatTokens } from "../lib/format";
-import { SPRING } from "../lib/motion";
+import { STAGE_SPRING } from "../lib/motion";
 import type { Stage } from "../lib/types";
 
 const STATUS_TEXT: Record<Stage["status"], string> = {
@@ -34,7 +34,7 @@ export function StageTimeline({ stages }: { stages: Stage[] }) {
             <m.li
               key={stage.name}
               layout
-              transition={SPRING}
+              transition={STAGE_SPRING}
               className={cx(
                 "rounded-2xl px-4 py-3 transition-colors duration-300 ease-apple",
                 stage.status === "running" ? "bg-accent-soft" : "bg-surface-2",

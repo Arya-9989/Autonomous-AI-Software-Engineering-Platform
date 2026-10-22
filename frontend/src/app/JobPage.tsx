@@ -49,7 +49,9 @@ function Meta({ label, value }: { label: string; value: string }) {
 function JobSkeleton() {
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:py-10" aria-busy="true" aria-label="Loading job">
-      <Skeleton className="h-5 w-24 rounded-full" />
+      <div data-vt-target="job-status" className="w-24">
+        <Skeleton className="h-5 rounded-full" />
+      </div>
       <Skeleton className="mt-3 h-9 w-2/3 max-w-xl" />
       <div className="mt-8 grid gap-5 lg:grid-cols-3">
         <Card className="p-6 lg:col-span-2">
@@ -196,12 +198,19 @@ export function JobPage() {
       <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <StatusBadge status={data.status} />
+            <span data-vt-target="job-status" className="inline-flex">
+              <StatusBadge status={data.status} />
+            </span>
             {data.project_name && (
-              <span className="font-mono text-[12px] text-ink-2">{data.project_name}</span>
+              <span data-vt-target="job-name" className="font-mono text-[12px] text-ink-2">
+                {data.project_name}
+              </span>
             )}
           </div>
-          <h1 className="mt-2.5 max-w-3xl text-[28px] leading-8 font-semibold tracking-[0.007em] text-ink md:text-[32px] md:leading-9 md:tracking-[-0.003em]">
+          <h1
+            data-vt-target="job-title"
+            className="mt-2.5 w-fit max-w-3xl text-[28px] leading-8 font-semibold tracking-[0.007em] text-ink md:text-[32px] md:leading-9 md:tracking-[-0.003em]"
+          >
             {data.title}
           </h1>
         </div>
