@@ -1,0 +1,25 @@
+# Kustomize base for the platform. Requires a Secret named `autoswe` (see README):
+#   kubectl -n autoswe create secret generic autoswe \
+#     --from-literal=DATABASE_URL='postgresql+asyncpg://user:pass@host:5432/autoswe' \
+#     --from-literal=API_KEYS='ci:<random-32-chars>' \
+#     --from-literal=ANTHROPIC_API_KEY='sk-ant-...'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: autoswe
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: autoswe
+    includeSelectors: false
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - serviceaccount.yaml
+  - deployment.yaml
+  - service.yaml
+  - hpa.yaml
+  - pdb.yaml
+  - networkpolicy.yaml
+images:
+  - name: autoswe
+    newName: ghcr.io/arya-9989/autoswe
+    newTag: "0.1.0"

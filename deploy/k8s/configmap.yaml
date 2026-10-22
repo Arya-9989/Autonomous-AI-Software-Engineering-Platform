@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: autoswe
+data:
+  ENVIRONMENT: production
+  LOG_FORMAT: json
+  LOG_LEVEL: INFO
+  # Migrations run once in the init container (guarded by a PostgreSQL advisory lock).
+  DB_AUTO_MIGRATE: "false"
+  WORKER_CONCURRENCY: "2"
+  MAX_ACTIVE_JOBS_PER_OWNER: "3"
+  LLM_DEFAULT_PROVIDER: auto
+  ANTHROPIC_MODEL: claude-opus-5-5
+  # Trust X-Forwarded-* only from the cluster network (adjust to your ingress CIDR).
+  FORWARDED_ALLOW_IPS: 10.0.0.0/8
