@@ -66,8 +66,8 @@ def render_ci(name: str) -> str:
           test:
             runs-on: ubuntu-latest
             steps:
-              - uses: actions/checkout@v4
-              - uses: actions/setup-python@v5
+              - uses: actions/checkout@v7
+              - uses: actions/setup-python@v7
                 with:
                   python-version: "3.12"
                   cache: pip
@@ -82,10 +82,10 @@ def render_ci(name: str) -> str:
             runs-on: ubuntu-latest
             needs: test
             steps:
-              - uses: actions/checkout@v4
-              - uses: docker/setup-buildx-action@v3
+              - uses: actions/checkout@v7
+              - uses: docker/setup-buildx-action@v4
               - name: Build image
-                uses: docker/build-push-action@v6
+                uses: docker/build-push-action@v7
                 with:
                   context: .
                   push: false

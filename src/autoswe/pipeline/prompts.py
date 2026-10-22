@@ -85,7 +85,7 @@ app.main:app as CMD
 - .dockerignore
 - .github/workflows/ci.yml: on push/pull_request; job running ruff check and pytest on \
 Python 3.12; second job building the image with docker/build-push-action (push: false). Pin \
-every action to a major version tag (e.g. actions/checkout@v4). Set least-privilege \
+every action to a major version tag (e.g. actions/checkout@v7). Set least-privilege \
 `permissions`.
 - deploy/k8s/: deployment.yaml (probes, resource requests/limits, runAsNonRoot, \
 allowPrivilegeEscalation false, DATABASE_URL from a Secret), service.yaml, kustomization.yaml
