@@ -152,5 +152,7 @@ async def test_title_defaults_to_first_line_of_spec(harness_factory: HarnessFact
     harness = await harness_factory(worker_enabled=False)
     long_line = "Build " + "a very detailed service " * 10
     job = await harness.submit(spec=long_line + "\nmore details here")
-    assert job["title"].endswith("...")
-    assert len(job["title"]) == 80
+    assert job["title"].endswith("service…")
+    assert len(job["title"]) <= 80
+    short = await harness.submit(spec="A todo API for teams. Users create tasks and assign them.")
+    assert short["title"] == "A todo API for teams"

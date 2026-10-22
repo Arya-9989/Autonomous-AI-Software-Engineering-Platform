@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from collections.abc import AsyncIterator
 from datetime import datetime
@@ -40,9 +41,14 @@ SSE_KEEPALIVE_S = 15.0
 SSE_POLL_S = 1.0
 
 
-def _title_from_spec(spec: str) -> str:
-    first_line = spec.strip().splitlines()[0]
-    return first_line if len(first_line) <= 80 else first_line[:77].rstrip() + "..."
+def _title_from_spec(spec: str, limit: int = 80) -> str:
+    """First sentence of the spec, shortened at a word boundary."""
+    first = spec.strip().splitlines()[0]
+    sentence = re.split(r"(?<=[.!?:])\s", first, maxsplit=1)[0].rstrip(".:")
+    if len(sentence) <= limit:
+        return sentence
+    cut = sentence[: limit - 1].rsplit(" ", 1)[0].rstrip(",;:-")
+    return cut + "…"  # ellipsis
 
 
 async def _owned_job(repo: JobRepository, job_id: str, owner: str) -> Job:

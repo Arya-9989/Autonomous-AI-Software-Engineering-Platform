@@ -152,8 +152,9 @@ def _parse_field_list(raw: str) -> list[EntityField]:
             continue
         name_part, _, type_part = token.partition(":")
         required = not name_part.strip().endswith("?")
-        parts = words(name_part.strip().rstrip("?"))
-        if len(parts) > 1:  # "due dates" -> "due_date"
+        raw_name = name_part.strip().rstrip("?")
+        parts = words(raw_name)
+        if len(raw_name.split()) > 1:  # prose like "due dates" -> "due_date"; keep snake_case as-is
             parts[-1] = singularize(parts[-1])
         name = safe_field_name("_".join(parts))
         if not name or name in seen:

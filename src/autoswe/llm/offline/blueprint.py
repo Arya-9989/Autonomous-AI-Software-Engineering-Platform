@@ -18,6 +18,10 @@ def resource_path(entity_name: str) -> str:
     return "/" + kebab(pluralize(entity_name))
 
 
+def _article(noun: str) -> str:
+    return "an" if noun[:1].lower() in "aeiou" else "a"
+
+
 def design(requirements: Requirements) -> ArchitectureSpec:
     endpoints: list[Endpoint] = [
         Endpoint(method="GET", path="/healthz", summary="Liveness probe", entity=None)
@@ -26,15 +30,16 @@ def design(requirements: Requirements) -> ArchitectureSpec:
         base = resource_path(entity.name)
         item = f"{base}/{{{snake(entity.name)}_id}}"
         plural = pluralize(entity.name).lower()
+        one = f"{_article(entity.name)} {entity.name.lower()}"
         endpoints += [
             Endpoint(method="GET", path=base, summary=f"List {plural}", entity=entity.name),
-            Endpoint(method="POST", path=base, summary=f"Create a {entity.name.lower()}",
+            Endpoint(method="POST", path=base, summary=f"Create {one}",
                      entity=entity.name),
             Endpoint(method="GET", path=item, summary=f"Get one {entity.name.lower()}",
                      entity=entity.name),
-            Endpoint(method="PATCH", path=item, summary=f"Update a {entity.name.lower()}",
+            Endpoint(method="PATCH", path=item, summary=f"Update {one}",
                      entity=entity.name),
-            Endpoint(method="DELETE", path=item, summary=f"Delete a {entity.name.lower()}",
+            Endpoint(method="DELETE", path=item, summary=f"Delete {one}",
                      entity=entity.name),
         ]  # fmt: skip
 
