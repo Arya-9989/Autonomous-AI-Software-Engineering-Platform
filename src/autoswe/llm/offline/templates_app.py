@@ -374,7 +374,7 @@ def render_pyproject(name: str, summary: str) -> str:
         ]
 
         [dependency-groups]
-        dev = ["pytest>=8.3", "httpx>=0.28", "ruff>=0.9"]
+        dev = ["pytest>=8.3", "httpx2>=2.16", "ruff>=0.9"]
 
         [build-system]
         requires = ["hatchling>=1.26"]
@@ -413,7 +413,7 @@ def render_readme(name: str, summary: str, architecture: ArchitectureSpec) -> st
 
         ```bash
         python -m venv .venv && . .venv/bin/activate
-        pip install -e . pytest httpx ruff
+        pip install -e . pytest httpx2 ruff
         uvicorn app.main:app --reload
         ```
 

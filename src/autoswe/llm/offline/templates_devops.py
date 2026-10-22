@@ -72,7 +72,7 @@ def render_ci(name: str) -> str:
                   python-version: "3.12"
                   cache: pip
               - name: Install
-                run: pip install -e . pytest httpx ruff
+                run: pip install -e . pytest httpx2 ruff
               - name: Lint
                 run: ruff check .
               - name: Test

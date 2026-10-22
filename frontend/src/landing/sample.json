@@ -266,7 +266,7 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "size": 753,
+      "size": 754,
       "stage": "devops",
       "language": "yaml"
     },
@@ -284,7 +284,7 @@
     },
     {
       "path": "README.md",
-      "size": 2031,
+      "size": 2032,
       "stage": "implement",
       "language": "markdown"
     },
@@ -404,7 +404,7 @@
     },
     {
       "path": "pyproject.toml",
-      "size": 751,
+      "size": 752,
       "stage": "implement",
       "language": "toml"
     },
@@ -475,7 +475,7 @@
     {
       "path": ".github/workflows/ci.yml",
       "language": "yaml",
-      "content": "name: CI\n\non:\n  push:\n    branches: [main]\n  pull_request:\n\npermissions:\n  contents: read\n\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - uses: actions/setup-python@v7\n        with:\n          python-version: \"3.12\"\n          cache: pip\n      - name: Install\n        run: pip install -e . pytest httpx ruff\n      - name: Lint\n        run: ruff check .\n      - name: Test\n        run: pytest -q\n\n  image:\n    runs-on: ubuntu-latest\n    needs: test\n    steps:\n      - uses: actions/checkout@v7\n      - uses: docker/setup-buildx-action@v4\n      - name: Build image\n        uses: docker/build-push-action@v7\n        with:\n          context: .\n          push: false\n          tags: library-api:${{ github.sha }}\n"
+      "content": "name: CI\n\non:\n  push:\n    branches: [main]\n  pull_request:\n\npermissions:\n  contents: read\n\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - uses: actions/setup-python@v7\n        with:\n          python-version: \"3.12\"\n          cache: pip\n      - name: Install\n        run: pip install -e . pytest httpx2 ruff\n      - name: Lint\n        run: ruff check .\n      - name: Test\n        run: pytest -q\n\n  image:\n    runs-on: ubuntu-latest\n    needs: test\n    steps:\n      - uses: actions/checkout@v7\n      - uses: docker/setup-buildx-action@v4\n      - name: Build image\n        uses: docker/build-push-action@v7\n        with:\n          context: .\n          push: false\n          tags: library-api:${{ github.sha }}\n"
     },
     {
       "path": "deploy/k8s/deployment.yaml",
