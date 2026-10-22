@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -103,3 +104,32 @@ async def test_live_stream_never_ends_before_the_terminal_event(
         (await harness.client.get(f"/api/v1/jobs/{job_id}/events", headers=ALICE)).text
     )
     assert [e["event"] for e in events] == ["job.queued", "job.cancelled", "end"]
+
+
+@pytest.mark.parametrize("header", ["²", "-1", "abc", " 3x", "١٢"])
+async def test_unparsable_last_event_id_replays_from_the_start(
+    harness: AppHarness, header: str
+) -> None:
+    """``"²".isdigit()`` is true but ``int("²")`` fails: such headers used to cause a 500."""
+    job_id = (await harness.submit())["id"]
+    await harness.wait_for(job_id, {"succeeded"})
+    url = f"/api/v1/jobs/{job_id}/events"
+    everything = parse_sse((await harness.client.get(url, headers=ALICE)).text)
+    # httpx only sends non-ASCII header values given as bytes.
+    headers = {k.encode(): v.encode() for k, v in ALICE.items()}
+    response = await harness.client.get(url, headers={**headers, b"Last-Event-ID": header.encode()})
+    assert response.status_code == 200
+    assert parse_sse(response.text) == everything
+
+
+async def test_event_timestamps_are_iso_8601(harness: AppHarness) -> None:
+    job_id = (await harness.submit())["id"]
+    await harness.wait_for(job_id, {"succeeded"})
+    events = parse_sse(
+        (await harness.client.get(f"/api/v1/jobs/{job_id}/events", headers=ALICE)).text
+    )
+    stamps = [e["at"] for e in events if "at" in e]
+    assert stamps
+    for stamp in stamps:
+        parsed = datetime.fromisoformat(stamp)
+        assert "T" in stamp and parsed.utcoffset() is not None

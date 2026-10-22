@@ -215,8 +215,25 @@ def _sse(event_id: int | None, event: str, data: dict[str, Any]) -> str:
     if event_id is not None:
         lines.append(f"id: {event_id}")
     lines.append(f"event: {event}")
-    lines.append(f"data: {json.dumps(data, default=str)}")
+    lines.append(f"data: {json.dumps(data, default=_json_default)}")
     return "\n".join(lines) + "\n\n"
+
+
+def _json_default(value: object) -> str:
+    # ISO 8601, like every timestamp in the REST responses: str() puts a space before the time,
+    # which Safari's Date parser rejects.
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
+
+
+def _event_cursor(last_event_id: str | None, after: int | None) -> int:
+    """Resume position: ``Last-Event-ID`` wins over ``?after=``; an unparsable header is ignored."""
+    value = (last_event_id or "").strip()
+    # str.isdigit() also accepts characters such as "²" that int() rejects: require ASCII 0-9.
+    if value.isascii() and value.isdecimal():
+        return int(value)
+    return after or 0
 
 
 @router.get(
@@ -242,9 +259,7 @@ async def stream_events(
     # Release the request-scoped connection now; the stream uses short sessions per poll so a
     # long-lived SSE client never pins a pooled connection.
     await repo.session.close()
-    cursor = after or 0
-    if last_event_id and last_event_id.isdigit():
-        cursor = int(last_event_id)
+    cursor = _event_cursor(last_event_id, after)
 
     async def generate() -> AsyncIterator[str]:
         nonlocal cursor
