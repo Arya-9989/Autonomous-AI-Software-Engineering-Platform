@@ -234,30 +234,36 @@ function ReviewPane() {
 const nativeTimeline = () => typeof CSS !== "undefined" && CSS.supports("animation-timeline: view()");
 
 /**
- * Browsers without CSS scroll-driven animations get the same story from Motion: `scroll()`
- * reports progress through the track and every CSS animation in it is seeked to that point.
- * Loaded only where it is needed; Chromium and Safari run the story in CSS alone.
+ * Browsers without CSS scroll-driven animations (Firefox today) get the same story: progress
+ * through the track is read once per frame while scrolling, and every CSS animation in it is
+ * seeked to that point (1s of animation time = the whole story). This is a dozen lines rather
+ * than Motion's scroll(): importing Motion from the product page split its shared modules out
+ * of the studio's chunk into extra preloaded requests, which cost the studio a Lighthouse point.
  */
 function useScrubFallback(track: React.RefObject<HTMLDivElement | null>, active: boolean) {
   useEffect(() => {
     const target = track.current;
     if (!active || !target) return;
-    let stop: (() => void) | undefined;
-    let disposed = false;
-    void import("motion").then(({ scroll }) => {
-      if (disposed) return;
-      stop = scroll(
-        (progress: number) => {
-          for (const animation of target.getAnimations({ subtree: true })) {
-            animation.currentTime = progress * 1000;
-          }
-        },
-        { target, offset: ["start 52px", "end end"] },
-      );
-    });
+    let frame = 0;
+    const seek = () => {
+      frame = 0;
+      const box = target.getBoundingClientRect();
+      const distance = box.height - (window.innerHeight - 52);
+      const progress = Math.min(1, Math.max(0, (52 - box.top) / Math.max(1, distance)));
+      for (const animation of target.getAnimations({ subtree: true })) {
+        animation.currentTime = progress * 1000;
+      }
+    };
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(seek);
+    };
+    seek();
+    window.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
     return () => {
-      disposed = true;
-      stop?.();
+      cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
     };
   }, [track, active]);
 }

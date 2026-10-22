@@ -136,6 +136,33 @@ test.describe("landing page", () => {
     expect(await rowOpacity(page, "models.py")).toBeLessThan(0.05);
   });
 
+  test("without CSS scroll timelines the fallback scrubs the same story", async ({ page }) => {
+    // Emulate a browser without scroll-driven animations (Firefox): the feature test fails and
+    // no animation may use a scroll timeline, so only the script's seeking can move anything.
+    await page.addInitScript(() => {
+      const supports = CSS.supports.bind(CSS);
+      CSS.supports = ((...args: [string, string?]) =>
+        String(args[0]).includes("animation-timeline")
+          ? false
+          : supports(...(args as [string]))) as typeof CSS.supports;
+      document.addEventListener("DOMContentLoaded", () => {
+        const style = document.createElement("style");
+        style.textContent = ".story-pinned * { animation-timeline: auto !important; }";
+        document.head.append(style);
+      });
+    });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/");
+    await expect(page.locator(".story-pinned[data-scrub]")).toBeVisible();
+    await scrollStory(page, 0.12);
+    await expect.poll(() => rowOpacity(page, "models.py")).toBeLessThan(0.05);
+    await scrollStory(page, 0.56);
+    await expect.poll(() => rowOpacity(page, "models.py")).toBeGreaterThan(0.95);
+    expect(await rowOpacity(page, "Dockerfile")).toBeLessThan(0.05);
+    await scrollStory(page, 0.98);
+    await expect.poll(() => rowOpacity(page, "Dockerfile")).toBeGreaterThan(0.95);
+  });
+
   test("swapping in the pinned story moves nothing below it", async ({ page, browser }) => {
     const outputTop = (p: Page) =>
       p.evaluate(() => document.getElementById("output")!.getBoundingClientRect().top + window.scrollY);
