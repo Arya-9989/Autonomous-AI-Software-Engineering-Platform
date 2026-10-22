@@ -9,12 +9,72 @@ from typing import Annotated, Literal
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from autoswe.sandbox.models import SandboxLimits
+
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
+SandboxBackend = Literal["none", "docker", "local", "remote"]
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-class Settings(BaseSettings):
+class SandboxSettings(BaseSettings):
+    """Where and how generated test suites run. Shared by the API and the sandbox runner."""
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
+
+    # none: tests are not executed; remote: the sandbox runner service (deployments);
+    # docker: containers started by this process (needs Docker access = root on the host);
+    # local: a plain subprocess, NOT isolated (development only).
+    sandbox_backend: SandboxBackend = "none"
+    sandbox_image: str = "autoswe-sandbox:local"
+    sandbox_docker_binary: str = "docker"
+    # e.g. "runsc" to run every sandbox container under gVisor.
+    sandbox_docker_runtime: str | None = None
+    sandbox_pool: str = Field(default="default", pattern=r"^[a-z0-9-]{1,32}$")
+    sandbox_runner_url: str | None = None
+    sandbox_runner_token: SecretStr | None = None
+    sandbox_timeout_s: float = Field(default=120.0, ge=5, le=900)
+    sandbox_memory_mb: int = Field(default=768, ge=128, le=8192)
+    sandbox_cpus: float = Field(default=1.0, gt=0, le=8)
+    sandbox_pids_limit: int = Field(default=128, ge=16, le=4096)
+    sandbox_workspace_mb: int = Field(default=64, ge=8, le=1024)
+    sandbox_typecheck: bool = True
+    sandbox_max_concurrent_runs: int = Field(default=2, ge=1, le=16)
+    sandbox_max_repair_rounds: int = Field(default=2, ge=0, le=5)
+
+    @field_validator("sandbox_docker_runtime", "sandbox_runner_url", "sandbox_runner_token",
+                     mode="before")  # fmt: skip
+    @classmethod
+    def _blank_sandbox_value_is_unset(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @model_validator(mode="after")
+    def _check_sandbox(self) -> SandboxSettings:
+        if self.sandbox_backend == "remote":
+            token = self.sandbox_runner_token
+            if not self.sandbox_runner_url or token is None:
+                raise ValueError(
+                    "SANDBOX_BACKEND=remote needs SANDBOX_RUNNER_URL and SANDBOX_RUNNER_TOKEN."
+                )
+        token = self.sandbox_runner_token
+        if token is not None and len(token.get_secret_value()) < 16:
+            raise ValueError("SANDBOX_RUNNER_TOKEN must be at least 16 characters.")
+        return self
+
+    def sandbox_limits(self) -> SandboxLimits:
+        return SandboxLimits(
+            timeout_s=self.sandbox_timeout_s,
+            memory_mb=self.sandbox_memory_mb,
+            cpus=self.sandbox_cpus,
+            pids=self.sandbox_pids_limit,
+            workspace_mb=self.sandbox_workspace_mb,
+            typecheck=self.sandbox_typecheck,
+        )
+
+
+class Settings(SandboxSettings):
     """All settings are read from ``AUTOSWE_``-less upper-case env vars, e.g. ``DATABASE_URL``."""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)

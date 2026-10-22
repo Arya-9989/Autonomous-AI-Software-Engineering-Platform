@@ -84,5 +84,8 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-ra --strict-markers"
-markers = ["slow: runs the generated project's own test-suite in a subprocess"]
+markers = [
+    "slow: runs the generated project's own test-suite in a subprocess",
+    "docker: runs real sandbox containers (needs Docker and the autoswe-sandbox image)",
+]
 filterwarnings = ["error::DeprecationWarning:autoswe.*"]
