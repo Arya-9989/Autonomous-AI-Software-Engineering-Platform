@@ -324,8 +324,12 @@ export function JobPage() {
               <Tabs.Trigger
                 key={item.id}
                 value={item.id}
+                // Radix focuses the tab from script on mousedown, which Chrome treats as
+                // focus-visible: mark pointer focus so the keyboard ring is not shown for clicks.
+                onPointerDown={(event) => event.currentTarget.setAttribute("data-pointer-focus", "")}
+                onBlur={(event) => event.currentTarget.removeAttribute("data-pointer-focus")}
                 className={cx(
-                  "relative min-w-0 shrink-0 rounded-full px-1 py-1.5 text-[13px] leading-5 tracking-[-0.016em] transition-colors duration-200 pointer-coarse:py-3 sm:px-4 sm:text-[14px]",
+                  "relative min-w-0 shrink-0 rounded-full [&[data-pointer-focus]]:outline-none px-1 py-1.5 text-[13px] leading-5 tracking-[-0.016em] transition-colors duration-200 pointer-coarse:py-3 sm:px-4 sm:text-[14px]",
                   tab === item.id ? "text-ink" : "text-ink-2 hover:text-ink",
                 )}
               >

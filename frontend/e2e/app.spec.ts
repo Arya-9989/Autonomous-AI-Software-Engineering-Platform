@@ -58,6 +58,13 @@ test.describe("studio", () => {
     // Review and requirements tabs.
     await page.getByRole("tab", { name: /Review/ }).click();
     await expect(page.getByRole("img", { name: "Review score 100 out of 100" })).toBeVisible();
+    // A clicked tab shows no keyboard focus ring; moving with the arrow keys does.
+    const outline = (name: RegExp) =>
+      page.getByRole("tab", { name }).evaluate((el) => getComputedStyle(el).outlineStyle);
+    expect(await outline(/Review/)).toBe("none");
+    await page.keyboard.press("ArrowRight");
+    await expect(page.getByRole("tab", { name: "Requirements" })).toBeFocused();
+    expect(await outline(/Requirements/)).toBe("solid");
     await page.getByRole("tab", { name: "Requirements" }).click();
     await expect(page.getByText("Original specification")).toBeVisible();
 
