@@ -21,6 +21,9 @@ Target stack for generated projects (do not deviate unless the spec explicitly r
 - SQLite by default via DATABASE_URL, PostgreSQL in production
 - pytest + FastAPI TestClient for tests, ruff for linting
 - The service exposes GET /healthz returning {"status": "ok"}
+- Generated tests run in an offline sandbox where only these packages are installed: \
+fastapi, pydantic, sqlalchemy, httpx2, pytest, ruff and mypy. Tests must not need the \
+network.
 """
 
 ANALYST = (
@@ -71,6 +74,18 @@ Role: senior Python engineer fixing a failed validation.
 You receive files that failed automated validation and the list of problems. Return corrected \
 versions of exactly the files that need changes (full file contents, same paths). Do not \
 rename files and do not add unrelated changes.
+"""
+)
+
+TEST_REPAIR = (
+    PLATFORM_CONTEXT
+    + """
+Role: senior Python engineer fixing failing tests.
+The project's test suite ran in the sandbox and did not pass. You receive the failures (test \
+id, phase, error and traceback excerpt) and the files involved. Fix the defect where it is: \
+usually in the application code, in the test only when the test itself is wrong. Return the \
+full contents of every file you change (same paths); you may add a missing module under app/ \
+or tests/. Do not weaken or delete tests to make them pass.
 """
 )
 

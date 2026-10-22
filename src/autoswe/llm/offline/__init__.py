@@ -27,6 +27,7 @@ from autoswe.pipeline.artifacts import (
     ReviewReport,
     ValidationReport,
 )
+from autoswe.sandbox.models import SandboxResult, SandboxStatus
 
 
 def _review(context: dict[str, Any]) -> ReviewReport:
@@ -58,16 +59,49 @@ def _review(context: dict[str, Any]) -> ReviewReport:
                 suggestion="Add OAuth2 or an authenticating gateway before exposing it publicly.",
             )
         )
-    score = max(0, 100 - 15 * errors - 3 * warnings)
+    penalty, tested = _test_findings(context.get("tests"), findings)
+    score = max(0, 100 - 15 * errors - 3 * warnings - penalty)
     verdict = "passes all structural checks" if errors == 0 else f"has {errors} blocking issue(s)"
     return ReviewReport(
         summary=(
             f"Deterministic review of {validation.files_checked} files: the project {verdict} "
-            f"with {warnings} warning(s). Offline reviews do not judge business logic."
+            f"with {warnings} warning(s).{tested} Offline reviews do not judge business logic."
         ),
         score=score,
         findings=findings,
     )
+
+
+def _test_findings(raw: object, findings: list[ReviewFinding]) -> tuple[int, str]:
+    """Fold the sandbox result into the review: (score penalty, summary sentence)."""
+    if not isinstance(raw, dict):
+        return 0, ""  # tests were not executed (no sandbox configured)
+    result = SandboxResult.model_validate(raw)
+    if result.status is SandboxStatus.ERROR:
+        findings.append(
+            ReviewFinding(severity="info", file=None,
+                          message=f"The test suite could not be executed: {result.message}",
+                          suggestion="Check the sandbox runner; this says nothing about the code.")
+        )  # fmt: skip
+        return 0, " Its tests could not be executed."
+    penalty = 0
+    for name, check in (("ruff", result.lint), ("mypy", result.typecheck)):
+        if check is not None and check.status == "failed":
+            penalty += 3
+            findings.append(
+                ReviewFinding(severity="warning", file=None,
+                              message=f"{name} reported {check.issue_count} issue(s).",
+                              suggestion="; ".join(check.issues[:3]))
+            )  # fmt: skip
+    tests = result.tests
+    if result.status is SandboxStatus.PASSED and tests is not None:
+        return penalty, f" All {tests.passed} generated tests pass in the sandbox."
+    findings.append(
+        ReviewFinding(severity="error", file=None,
+                      message=f"The generated test suite does not pass: {result.describe()}.",
+                      suggestion="Fix the failing tests listed in the sandbox report.")
+    )  # fmt: skip
+    return penalty + 25, " Its generated tests do not pass in the sandbox."
 
 
 class OfflineProvider:

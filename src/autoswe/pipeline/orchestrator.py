@@ -31,6 +31,7 @@ from autoswe.pipeline.agents import Agent, PipelineState, StageResult, default_a
 from autoswe.pipeline.artifacts import STAGE_LABELS, StageName
 from autoswe.pipeline.validation import Limits
 from autoswe.repository import JobRepository
+from autoswe.sandbox.backends import Sandbox
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,8 @@ class Orchestrator:
         limits: Limits,
         max_repair_rounds: int = 1,
         agents: Sequence[Agent] | None = None,
+        sandbox: Sandbox | None = None,
+        max_test_repair_rounds: int = 2,
     ) -> None:
         self._db = db
         self._registry = registry
@@ -58,6 +61,8 @@ class Orchestrator:
         self._limits = limits
         self._max_repair_rounds = max_repair_rounds
         self._agents = list(agents) if agents is not None else default_agents()
+        self._sandbox = sandbox
+        self._max_test_repair_rounds = max_test_repair_rounds
 
     # --- persistence helpers ----------------------------------------------------------------------
 
@@ -113,7 +118,11 @@ class Orchestrator:
             provider_name = job.provider
             llm = self._registry.get(job.provider)
             state = PipelineState(
-                spec=job.spec, limits=self._limits, max_repair_rounds=self._max_repair_rounds
+                spec=job.spec,
+                limits=self._limits,
+                max_repair_rounds=self._max_repair_rounds,
+                sandbox=self._sandbox,
+                max_test_repair_rounds=self._max_test_repair_rounds,
             )
             await self._emit(job_id, "job.started", provider=llm.name, model=llm.model)
             status = await self._run_stages(job_id, state, llm)
@@ -195,6 +204,7 @@ class Orchestrator:
                     artifacts["validation"] = state.validation.model_dump()
                 if state.review:
                     artifacts["review"] = state.review.model_dump()
+                artifacts["test_report"] = state.test_report()
             await repo.update_job(job_id, **artifacts)
             await repo.update_stage(
                 job_id,
@@ -229,6 +239,7 @@ class Orchestrator:
             {
                 "files": len(state.files),
                 "validation_passed": report.passed if report else None,
+                "tests": state.test_result.status.value if state.test_result else None,
                 "score": state.review.score if state.review else None,
             },
             status=JobStatus.SUCCEEDED,

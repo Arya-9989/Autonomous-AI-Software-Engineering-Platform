@@ -300,7 +300,8 @@ class JobRepository:
             .where(Job.id == job_id)
             .values(status=JobStatus.QUEUED, current_stage=None, worker_id=None, started_at=None,
                     heartbeat_at=None, input_tokens=0, output_tokens=0, requirements=None,
-                    architecture=None, validation=None, review=None, updated_at=utcnow())
+                    architecture=None, validation=None, review=None, test_report=None,
+                    updated_at=utcnow())
         )  # fmt: skip
         self.session.add(JobEvent(job_id=job_id, type="job.requeued", payload={}))
         await self.session.commit()

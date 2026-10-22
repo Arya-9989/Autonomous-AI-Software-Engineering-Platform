@@ -1,4 +1,5 @@
-# Local stack: the platform (API + UI + worker) backed by PostgreSQL.
+# Local stack: the platform (API + UI + worker) backed by PostgreSQL, plus the sandbox runner that
+# executes generated test suites.
 #   docker compose up --build        -> http://localhost:8000
 # Values here are for local use only; production config lives in deploy/.
 name: autoswe
@@ -24,6 +25,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      sandbox-runner:
+        condition: service_healthy
     ports:
       - "${AUTOSWE_PORT:-8000}:8000"
     environment:
@@ -34,12 +37,65 @@ services:
       AUTH_DISABLED: ${AUTH_DISABLED:-true}
       API_KEYS: ${API_KEYS:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Generated tests run in the sandbox runner; this container has no Docker access.
+      SANDBOX_BACKEND: ${SANDBOX_BACKEND:-remote}
+      SANDBOX_RUNNER_URL: http://sandbox-runner:8080
+      SANDBOX_RUNNER_TOKEN: ${SANDBOX_RUNNER_TOKEN:-local-demo-runner-token-change-me}
+    networks: [default, sandbox]
     read_only: true
     tmpfs:
       - /tmp
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
+
+  # The only service with Docker access (the socket is root-equivalent on the host). It is
+  # reachable only from `app`, over an internal network with no route out, and it starts
+  # sandbox containers with limits it alone decides. See docs/adr/0001.
+  sandbox-runner:
+    build:
+      context: .
+      target: sandbox-runner
+    image: autoswe-sandbox-runner:local
+    depends_on:
+      sandbox-image:
+        condition: service_completed_successfully
+    environment:
+      SANDBOX_RUNNER_TOKEN: ${SANDBOX_RUNNER_TOKEN:-local-demo-runner-token-change-me}
+      SANDBOX_IMAGE: autoswe-sandbox:local
+      SANDBOX_POOL: compose
+      # Set to runsc to run every sandbox container under gVisor (if the daemon has it).
+      SANDBOX_DOCKER_RUNTIME: ${SANDBOX_DOCKER_RUNTIME:-}
+      DOCKER_CONFIG: /tmp/.docker
+      LOG_FORMAT: json
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    # The socket's group: 0 on Docker Desktop; `stat -c %g /var/run/docker.sock` on Linux.
+    group_add:
+      - "${DOCKER_SOCKET_GID:-0}"
+    networks: [sandbox]
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  # Builds the image that sandbox containers are started from, then exits.
+  sandbox-image:
+    build:
+      context: .
+      dockerfile: sandbox/Dockerfile
+    image: autoswe-sandbox:local
+    command: ["python", "-c", "pass"]
+    network_mode: none
+    read_only: true
+    restart: "no"
+
+networks:
+  sandbox:
+    internal: true
 
 volumes:
   pgdata:

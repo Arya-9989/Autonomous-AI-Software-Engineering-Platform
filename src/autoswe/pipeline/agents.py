@@ -7,9 +7,10 @@ stateless and know nothing about persistence or transport; the orchestrator hand
 
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import ClassVar, Protocol
+from typing import Any, ClassVar, Protocol
 
 from autoswe.llm.base import LLMProvider, LLMRequest, TokenUsage
 from autoswe.pipeline import prompts
@@ -26,6 +27,8 @@ from autoswe.pipeline.artifacts import (
 )
 from autoswe.pipeline.docs import architecture_markdown
 from autoswe.pipeline.validation import Limits, path_key, sanitize_files, validate_project
+from autoswe.sandbox.backends import Sandbox
+from autoswe.sandbox.models import SandboxResult, SandboxStatus
 
 Emit = Callable[[str], Awaitable[None]]
 
@@ -57,6 +60,11 @@ class PipelineState:
     validation: ValidationReport | None = None
     review: ReviewReport | None = None
     rejected: list[ValidationIssue] = field(default_factory=list)
+    # Sandboxed test execution: None disables it (the reviewer then judges structure only).
+    sandbox: Sandbox | None = None
+    max_test_repair_rounds: int = 2
+    test_runs: list[SandboxResult] = field(default_factory=list)
+    test_repair_exhausted: bool = False
 
     def require_requirements(self) -> Requirements:
         if self.requirements is None:
@@ -91,6 +99,22 @@ class PipelineState:
         report = report.model_copy(update={"issues": [*self.rejected, *report.issues]})
         self.validation = report
         return report
+
+    @property
+    def test_result(self) -> SandboxResult | None:
+        return self.test_runs[-1] if self.test_runs else None
+
+    def test_report(self) -> dict[str, Any] | None:
+        """What is persisted and served at ``/jobs/{id}/tests``: the final run and the history."""
+        final = self.test_result
+        if final is None:
+            return None
+        return {
+            "final": final.model_dump(mode="json"),
+            "attempts": [{**run.brief(), "duration_s": run.duration_s} for run in self.test_runs],
+            "repair_rounds": len(self.test_runs) - 1,
+            "repair_budget_exhausted": self.test_repair_exhausted,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -301,7 +325,12 @@ class Reviewer:
             report = state.validate()
             await emit(_describe(report))
 
+        if state.sandbox is not None:
+            usage += await self._test_and_repair(state, llm, emit, repaired)
+            report = state.validation or report
+
         await emit("Reviewing correctness, security and operability")
+        tests = state.test_result
         review_response = await llm.generate(
             LLMRequest(
                 agent="reviewer",
@@ -310,6 +339,7 @@ class Reviewer:
                     requirements=requirements.model_dump(),
                     architecture=architecture.model_dump(),
                     validation=report.model_dump(),
+                    tests=tests.brief() if tests is not None else "not executed",
                     files=[f.model_dump(include={"path", "content"}) for f in state.files.values()],
                 ),
                 output_type=ReviewReport,
@@ -317,6 +347,7 @@ class Reviewer:
                     "requirements": requirements.model_dump(),
                     "validation": report.model_dump(),
                     "files": sorted(state.files),
+                    "tests": tests.model_dump(mode="json") if tests is not None else None,
                 },
                 effort="medium",
             )
@@ -327,11 +358,102 @@ class Reviewer:
         )
         state.review = review
         verdict = "passed" if report.passed else f"{len(report.errors)} blocking issue(s)"
+        tested = "" if tests is None else f"; tests {_test_verdict(tests)}"
         return StageResult(
-            summary=f"Validation {verdict}; review score {review.score}/100",
+            summary=f"Validation {verdict}{tested}; review score {review.score}/100",
             usage=usage,
             files=tuple(sorted(repaired)),
         )
+
+    async def _test_and_repair(
+        self, state: PipelineState, llm: LLMProvider, emit: Emit, repaired: set[str]
+    ) -> TokenUsage:
+        """Run the tests in the sandbox; feed failures to the code generator, bounded."""
+        assert state.sandbox is not None
+        usage = TokenUsage()
+        rounds = state.max_test_repair_rounds
+        for attempt in range(rounds + 1):
+            label = "" if attempt == 0 else f" (after repair round {attempt})"
+            await emit(f"Running the test suite in the {state.sandbox.name} sandbox{label}")
+            result = await state.sandbox.run(list(state.files.values()))
+            state.test_runs.append(result)
+            await emit(result.describe())
+            if result.status is SandboxStatus.PASSED or not result.repairable:
+                break
+            if attempt == rounds:
+                state.test_repair_exhausted = rounds > 0
+                if rounds:
+                    await emit(f"Test repair budget of {rounds} round(s) used up")
+                break
+            sent = _files_for_test_repair(state, result)
+            problems = result.problems()
+            await emit(
+                f"Test repair round {attempt + 1}: asking the code generator to fix "
+                f"{len(problems)} problem(s) in {sorted(sent)[:6]}"
+            )
+            repair = RepairRequest(files=[state.files[p] for p in sorted(sent)], problems=problems)
+            response = await llm.generate(
+                LLMRequest(
+                    agent="coder.repair",
+                    system=prompts.TEST_REPAIR,
+                    prompt=prompts.render_payload(
+                        problems="\n\n".join(problems),
+                        files=[f.model_dump() for f in repair.files],
+                    ),
+                    output_type=FileBundle,
+                    context={"repair": repair.model_dump(), "kind": "tests"},
+                    effort="high",
+                    metadata={"repair.kind": "tests", "repair.round": attempt + 1},
+                )
+            )
+            usage += response.usage
+            changed = [
+                f for f in response.output.files
+                if f.path not in state.files or state.files[f.path].content != f.content
+            ]  # fmt: skip
+            allowed = {f.path for f in changed if f.path in sent or f.path not in state.files}
+            accepted, _ = state.merge(changed, StageName.IMPLEMENT, keep=_owned_by(allowed))
+            if not accepted:
+                await emit("Test repair produced no usable changes; keeping the current files")
+                break
+            repaired.update(accepted)
+            state.validate()
+        return usage
+
+
+def _owned_by(allowed: set[str]) -> Callable[[str], bool]:
+    """A test repair may change the files it was sent and add new non-delivery files."""
+    frozen = frozenset(allowed)
+    return lambda path: path in frozen and not is_devops_path(path)
+
+
+_PY_PATH = re.compile(r"[A-Za-z0-9_./-]+\.py")
+MAX_TEST_REPAIR_FILES = 12
+
+
+def _files_for_test_repair(state: PipelineState, result: SandboxResult) -> set[str]:
+    """The failing tests' files, files their tracebacks mention, then other source files."""
+    picked: list[str] = []
+
+    def add(path: str) -> None:
+        if path in state.files and path not in picked and not is_devops_path(path):
+            picked.append(path)
+
+    for failure in result.tests.failures if result.tests else []:
+        add(failure.nodeid.split("::", 1)[0])
+        for match in _PY_PATH.findall(f"{failure.details} {failure.message}"):
+            add(match.removeprefix("./"))
+    for path in sorted(state.files):  # timeouts and limits name no file: send the sources
+        if path.endswith(".py") and (path.startswith(("app/", "tests/")) or "/" not in path):
+            add(path)
+    return set(picked[:MAX_TEST_REPAIR_FILES])
+
+
+def _test_verdict(result: SandboxResult) -> str:
+    tests = result.tests
+    if result.status is SandboxStatus.PASSED and tests is not None:
+        return f"{tests.passed}/{tests.collected} passed"
+    return result.status.value.replace("_", " ")
 
 
 def _describe(report: ValidationReport) -> str:

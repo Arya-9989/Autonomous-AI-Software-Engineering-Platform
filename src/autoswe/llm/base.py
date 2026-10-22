@@ -26,6 +26,8 @@ class LLMRequest[T: BaseModel]:
     # already contains everything); the offline provider uses it instead of parsing prose.
     context: Mapping[str, Any] = field(default_factory=dict)
     effort: Effort = "high"
+    # Facts about the call for tracing (e.g. which repair round it is); never sent to a model.
+    metadata: Mapping[str, str | int | bool] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

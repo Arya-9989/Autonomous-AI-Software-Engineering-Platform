@@ -110,6 +110,7 @@ class Job(Base):
     architecture: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     validation: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     review: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    test_report: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
     worker_id: Mapped[str | None] = mapped_column(String(64))

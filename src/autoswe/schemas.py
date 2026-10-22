@@ -114,6 +114,34 @@ class ValidationSummary(BaseModel):
     files_checked: int
 
 
+class TestsSummary(BaseModel):
+    __test__ = False  # not a pytest test class
+
+    status: str
+    backend: str
+    collected: int
+    passed: int
+    failed: int
+    errors: int
+    attempts: int
+    repair_budget_exhausted: bool
+
+    @classmethod
+    def from_report(cls, report: dict[str, Any]) -> TestsSummary:
+        final = report.get("final") or {}
+        tests = final.get("tests") or {}
+        return cls(
+            status=str(final.get("status", "error")),
+            backend=str(final.get("backend", "")),
+            collected=int(tests.get("collected", 0)),
+            passed=int(tests.get("passed", 0)),
+            failed=int(tests.get("failed", 0)),
+            errors=int(tests.get("errors", 0)),
+            attempts=len(report.get("attempts") or []),
+            repair_budget_exhausted=bool(report.get("repair_budget_exhausted")),
+        )
+
+
 class JobDetail(JobSummary):
     spec: str
     error: str | None
@@ -123,6 +151,9 @@ class JobDetail(JobSummary):
     output_tokens: int
     cancel_requested: bool
     validation: ValidationSummary | None
+    tests: TestsSummary | None = Field(
+        default=None, description="Sandboxed test run; null when tests were not executed"
+    )
     review_score: int | None
 
     @classmethod
@@ -147,6 +178,7 @@ class JobDetail(JobSummary):
             output_tokens=job.output_tokens,
             cancel_requested=job.cancel_requested,
             validation=validation,
+            tests=TestsSummary.from_report(job.test_report) if job.test_report else None,
             review_score=(job.review or {}).get("score"),
         )
 

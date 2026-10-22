@@ -173,6 +173,16 @@ async def get_review(job_id: str, principal: PrincipalDep, repo: RepositoryDep) 
     return {**job.review, "validation": job.validation}
 
 
+@router.get("/{job_id}/tests")
+async def get_test_report(job_id: str, principal: PrincipalDep, repo: RepositoryDep) -> Any:
+    """The sandboxed test run: the final result (lint, type check, tests, failures) and the
+    status of every attempt, including the ones before each repair round."""
+    job = await _owned_job(repo, job_id, principal.name)
+    if job.test_report is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Tests were not run for this job")
+    return job.test_report
+
+
 @router.get("/{job_id}/files", response_model=list[FileEntry])
 async def list_files(job_id: str, principal: PrincipalDep, repo: RepositoryDep) -> list[FileEntry]:
     await _owned_job(repo, job_id, principal.name)

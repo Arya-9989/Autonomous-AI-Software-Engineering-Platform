@@ -24,6 +24,7 @@ from autoswe.migrations.runner import upgrade_to_head
 from autoswe.observability import ObservabilityMiddleware, content_security_policy
 from autoswe.pipeline.orchestrator import Orchestrator
 from autoswe.pipeline.validation import Limits
+from autoswe.sandbox.factory import build_sandbox
 from autoswe.security import ApiKeyAuthenticator
 from autoswe.web import html_pages, inline_script_hashes, mount_frontend
 from autoswe.worker import Worker
@@ -47,6 +48,8 @@ def build_services(
             max_total_bytes=settings.max_total_bytes,
         ),
         max_repair_rounds=settings.max_repair_rounds,
+        sandbox=build_sandbox(settings),
+        max_test_repair_rounds=settings.sandbox_max_repair_rounds,
     )
     services = Services(
         settings=settings,
