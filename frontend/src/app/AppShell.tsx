@@ -10,6 +10,7 @@ import { Badge, IconButton } from "../components/ui";
 import { api, getApiKey } from "../lib/api";
 import { cx } from "../lib/cx";
 import { whenIdle } from "../lib/idle";
+import { loadMotionFeatures } from "../lib/motion";
 import { useTheme } from "../lib/theme";
 import { ApiKeyDialog } from "./ApiKeyDialog";
 import { JobList } from "./JobList";
@@ -26,8 +27,6 @@ const detectMac = () => /Mac|iPhone|iPad/.test(navigator.platform);
 // idle, rendered from the first time it opens.
 const loadPalette = () => import("./CommandPalette");
 const CommandPalette = lazy(() => loadPalette().then((module) => ({ default: module.CommandPalette })));
-
-const loadMotionFeatures = () => import("../lib/motionFeatures").then((module) => module.default);
 
 function Sidebar() {
   return (
