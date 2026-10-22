@@ -69,8 +69,17 @@ Animated WebP (479 KB), with a shorter GIF for clients that cannot show WebP.</s
   hash, nothing else inline), security headers, a non-root container, and no secrets in code.
 - **Web UI** (React, TypeScript, Tailwind, Motion, Radix):
   - A product page at `/`, dark-first, built from a real offline run of the pipeline: a replay
-    of the run on the five-agent rail, a scroll story that shows what each agent produced, and an
-    unedited view of the generated code. A test regenerates that data and fails on drift.
+    of the run on the five-agent rail, a pinned scroll story that shows how the pipeline works
+    (each agent lights up and hands its typed artifact on, the real file tree grows as files are
+    written, real code lines appear, and the reviewer ticks off every file with the parser that
+    checks it), and an unedited view of the generated code. A test regenerates that data and
+    fails on drift.
+  - Motion that explains rather than decorates: the story is scrubbed by scroll on a CSS scroll
+    timeline (where a browser lacks one, a few lines of script seek the same animations), the
+    local nav's underline slides to the section in view, the validation numbers count up once, a
+    job card morphs into its page (View Transitions), and pipeline stages spring as a job
+    advances. All of it is progressive: the prerendered page is complete without JavaScript, and
+    reduced motion gets final states.
   - The studio at `/app`: spec composer with examples, a live pipeline timeline and streaming
     activity log, file tree with Shiki highlighting, architecture (Mermaid), review and
     requirements tabs, a ⌘K / Ctrl+K command palette, toasts and accessible dialogs.
@@ -84,10 +93,18 @@ Animated WebP (479 KB), with a shorter GIF for clients that cannot show WebP.</s
   RDS, Secrets Manager).
 - **CLI**: `autoswe generate "<spec>" --out ./project` runs the whole pipeline locally.
 
+<picture>
+  <source srcset="docs/story-scroll.webp" type="image/webp">
+  <img alt="The product page's pinned story, scrolled: the five agents light up in turn, the real file tree grows, real code lines appear and the reviewer ticks off every file" src="docs/story-scroll.gif">
+</picture>
+
+<sub>The product page's "How it works" story, recorded at 1440×900 while scrolling at a steady pace
+(6 frames a second here). Every file, line and number is from a real offline run.</sub>
+
 <table>
   <tr>
     <td><img src="docs/screenshots/landing-hero-dark.png" alt="Product page hero: Plain English in. Deployable project out."></td>
-    <td><img src="docs/screenshots/landing-story-dark.png" alt="How it works: the architect's real output beside the pinned five-agent rail"></td>
+    <td><img src="docs/screenshots/landing-story-dark.png" alt="How it works, pinned: the code generator at work, its files growing in the real tree and app/routers/books.py being written"></td>
   </tr>
   <tr>
     <td><img src="docs/screenshots/landing-output-dark.png" alt="Output: unedited generated code in a highlighted viewer"></td>
@@ -328,7 +345,9 @@ and checks the product page and the studio. axe finds no serious or critical WCA
 on the product page (both themes, desktop and phone), the new-project page, a finished job (both
 themes), the command palette, the delete dialog and the not-found page. Nothing overflows at 390px
 or 320px; a job runs live through all five agents; the product page is complete without
-JavaScript; and the carousel, keyboard focus, appearance (including blocked storage), command
+JavaScript; the scroll story scrubs and reverses, and reduced motion gets the complete static
+story with nothing faded; count-ups land on the exact static values; a job card opens its page
+through one view transition (none with reduced motion); and the carousel, keyboard focus, appearance (including blocked storage), command
 palette, dialogs and not-found states work.
 Set `E2E_SERVER_COMMAND` if `uv` is not on your `PATH`.
 
