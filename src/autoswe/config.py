@@ -70,6 +70,14 @@ class Settings(BaseSettings):
     anthropic_max_retries: int = Field(default=2, ge=0, le=10)
     anthropic_server_fallbacks: bool = True
 
+    @field_validator("anthropic_effort", "anthropic_api_key", "static_dir", mode="before")
+    @classmethod
+    def _blank_is_unset(cls, value: object) -> object:
+        # `.env.example` ships `ANTHROPIC_EFFORT=` and friends: an empty value means "not set".
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_origins(cls, value: object) -> object:

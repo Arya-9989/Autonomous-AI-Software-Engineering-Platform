@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from autoswe.config import Settings
 from autoswe.security import ApiKeyAuthenticator, extract_api_key
 from tests.conftest import ALICE, BOB, LIBRARY_SPEC, AppHarness, HarnessFactory, make_settings
 
@@ -104,3 +105,22 @@ def test_authenticator_unit() -> None:
     assert extract_api_key("bearer abc", None) == "abc"
     assert extract_api_key("Token abc", None) is None
     assert extract_api_key("Bearer x", "header-wins") == "header-wins"
+
+
+def test_env_example_is_a_working_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The README quickstart copies .env.example to .env and starts the server with it."""
+    env_example = Path(__file__).resolve().parents[1] / ".env.example"
+    for name in ("ANTHROPIC_EFFORT", "ANTHROPIC_API_KEY", "API_KEYS", "AUTH_DISABLED"):
+        monkeypatch.delenv(name, raising=False)
+    settings = Settings(_env_file=env_example)
+    assert settings.auth_disabled is True
+    assert settings.anthropic_effort is None  # `ANTHROPIC_EFFORT=` means per-agent defaults
+    assert settings.anthropic_configured is False
+    assert settings.cors_origins == []
+
+
+@pytest.mark.parametrize("value", ["", "  "])
+def test_blank_optional_settings_mean_unset(tmp_path: Path, value: str) -> None:
+    settings = make_settings(tmp_path, anthropic_effort=value, anthropic_api_key=value)
+    assert settings.anthropic_effort is None
+    assert settings.anthropic_api_key is None
