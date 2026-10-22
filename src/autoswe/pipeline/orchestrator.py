@@ -70,6 +70,13 @@ class Orchestrator:
         async with self._db.session() as session:
             await JobRepository(session).update_job(job_id, **values)
 
+    async def _finish(
+        self, job_id: str, event_type: str, payload: dict[str, Any], **values: Any
+    ) -> None:
+        async with self._db.session() as session:
+            await JobRepository(session).finish(job_id, event_type, payload, **values)
+        self._notifier.notify_job(job_id)
+
     async def _update_stage(self, job_id: str, stage: StageName, **values: Any) -> None:
         async with self._db.session() as session:
             await JobRepository(session).update_stage(job_id, stage.value, **values)
@@ -213,15 +220,17 @@ class Orchestrator:
         if report is not None:
             for issue in report.issues:
                 VALIDATION_ISSUES.labels(issue.severity).inc()
-        await self._update_job(
-            job_id, status=JobStatus.SUCCEEDED, current_stage=None, finished_at=utcnow()
-        )
-        await self._emit(
+        await self._finish(
             job_id,
             "job.succeeded",
-            files=len(state.files),
-            validation_passed=report.passed if report else None,
-            score=state.review.score if state.review else None,
+            {
+                "files": len(state.files),
+                "validation_passed": report.passed if report else None,
+                "score": state.review.score if state.review else None,
+            },
+            status=JobStatus.SUCCEEDED,
+            current_stage=None,
+            finished_at=utcnow(),
         )
         logger.info("job succeeded", extra={"files": len(state.files)})
         return JobStatus.SUCCEEDED
@@ -234,20 +243,29 @@ class Orchestrator:
             await self._emit(job_id, "stage.failed", stage=stage.value, error=message)
         async with self._db.session() as session:
             await JobRepository(session).skip_pending_stages(job_id)
-        await self._update_job(
-            job_id, status=JobStatus.FAILED, error=message, current_stage=None, finished_at=utcnow()
+        await self._finish(
+            job_id,
+            "job.failed",
+            {"error": message},
+            status=JobStatus.FAILED,
+            error=message,
+            current_stage=None,
+            finished_at=utcnow(),
         )
-        await self._emit(job_id, "job.failed", error=message)
         logger.warning("job failed", extra={"error": message})
         return JobStatus.FAILED
 
     async def _cancelled(self, job_id: str) -> JobStatus:
         async with self._db.session() as session:
             await JobRepository(session).skip_pending_stages(job_id)
-        await self._update_job(
-            job_id, status=JobStatus.CANCELLED, current_stage=None, finished_at=utcnow()
+        await self._finish(
+            job_id,
+            "job.cancelled",
+            {},
+            status=JobStatus.CANCELLED,
+            current_stage=None,
+            finished_at=utcnow(),
         )
-        await self._emit(job_id, "job.cancelled")
         return JobStatus.CANCELLED
 
     async def _handle_interrupt(self, job_id: str) -> None:

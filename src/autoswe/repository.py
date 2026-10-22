@@ -158,6 +158,20 @@ class JobRepository:
         await self.session.commit()
         return event
 
+    async def finish(
+        self, job_id: str, event_type: str, payload: dict[str, Any], **values: Any
+    ) -> None:
+        """Set a terminal status and record its event in one transaction.
+
+        An event stream that sees the terminal status has therefore always been able to see
+        the terminal event too, so it never ends before sending it.
+        """
+        await self.session.execute(
+            update(Job).where(Job.id == job_id).values(updated_at=utcnow(), **values)
+        )
+        self.session.add(JobEvent(job_id=job_id, type=event_type, payload=payload))
+        await self.session.commit()
+
     async def update_job(self, job_id: str, **values: Any) -> None:
         await self.session.execute(
             update(Job).where(Job.id == job_id).values(updated_at=utcnow(), **values)

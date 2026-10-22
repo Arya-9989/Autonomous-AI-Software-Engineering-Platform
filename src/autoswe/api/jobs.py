@@ -249,8 +249,10 @@ async def stream_events(
         while True:
             async with services.db.session() as session:
                 stream_repo = JobRepository(session)
-                events = await stream_repo.events_after(job_id, cursor)
+                # Status first, then events: a job seen as terminal here already has its
+                # terminal event committed (JobRepository.finish), so this read includes it.
                 job_status = await stream_repo.status_of(job_id)
+                events = await stream_repo.events_after(job_id, cursor)
             for event in events:
                 cursor = event.id
                 payload = {"type": event.type, "at": event.created_at, **event.payload}
