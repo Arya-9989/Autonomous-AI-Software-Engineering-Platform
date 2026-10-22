@@ -22,10 +22,14 @@ on a deterministic **offline provider** that needs no API key, so tests, CI and 
 > The platform **generates** infrastructure code. It never runs `terraform apply` or deploys
 > anything to AWS for you. The generated Terraform is checked with `terraform validate` in CI.
 
-![A job running live: the five agents hand over one by one, events stream in, then the generated files open](docs/job-running.gif)
+<picture>
+  <source srcset="docs/job-running.webp" type="image/webp">
+  <img alt="A job running live: the five agents hand over one by one, events stream in, then the generated files open" src="docs/job-running.gif">
+</picture>
 
 <sub>A real job on the library spec, recorded from the studio with the offline provider and
-`OFFLINE_DELAY_S=0.8` so each stage stays on screen long enough to see.</sub>
+`OFFLINE_DELAY_S=2` so each stage stays on screen long enough to see, played at 1.5× speed.
+Animated WebP (479 KB), with a shorter GIF for clients that cannot show WebP.</sub>
 
 ## Features
 
@@ -40,11 +44,13 @@ on a deterministic **offline provider** that needs no API key, so tests, CI and 
     (`members borrow books` → `Member`, `Book`, or explicit `Book(title, year:int)` syntax) and
     renders a working FastAPI CRUD service.
 - **Validation of generated output**:
-  - Path-safety and size limits (zip-slip and absolute paths are rejected).
+  - Path-safety and size limits: absolute paths, `..`, `.git` in any letter case, and names
+    that are unsafe once extracted on Windows or macOS are rejected; paths that differ only in
+    case count as one file.
   - Every file is parsed: `ast` for Python, PyYAML, python-hcl2 for Terraform, `json`, `tomllib`.
   - Kubernetes rules: probes, resource limits, non-root, privileged containers.
   - Dockerfile rules: pinned base images, non-root user, health check.
-  - GitHub Actions rules: triggers, `runs-on`, pinned actions.
+  - GitHub Actions rules: triggers, `runs-on`, version-pinned actions.
   - A secret scanner, required-structure checks, and design-to-code traceability.
   - When validation fails, one bounded **repair round** goes back to the code generator.
 - **Async jobs with durable state**: SQLAlchemy 2.0 (SQLite by default, PostgreSQL in compose and
@@ -59,8 +65,8 @@ on a deterministic **offline provider** that needs no API key, so tests, CI and 
   LLM tokens, validation issues), structured JSON logs carrying `request_id` and `job_id`, and
   `/healthz` and `/readyz` probes.
 - **Security**: API-key auth with jobs scoped to each principal (cross-tenant access returns 404),
-  per-principal active-job limits, a strict CSP and security headers, a non-root container, and
-  no secrets in code.
+  per-principal active-job limits, a strict CSP (the UI's inline boot script is admitted by its
+  hash, nothing else inline), security headers, a non-root container, and no secrets in code.
 - **Web UI** (React, TypeScript, Tailwind, Motion, Radix):
   - A product page at `/`, dark-first, built from a real offline run of the pipeline: a replay
     of the run on the five-agent rail, a scroll story that shows what each agent produced, and an
@@ -69,8 +75,11 @@ on a deterministic **offline provider** that needs no API key, so tests, CI and 
     activity log, file tree with Shiki highlighting, architecture (Mermaid), review and
     requirements tabs, a ⌘K / Ctrl+K command palette, toasts and accessible dialogs.
   - Light and dark themes that follow the OS (with a manual switch), reduced-motion support,
-    designed loading, empty and error states, and layouts from 390px up. Playwright and axe
-    check every page for WCAG 2.2 AA in CI.
+    designed loading, empty and error states, and layouts from 320px up.
+  - Fast on a phone: the product page and the studio's loading states are prerendered at build
+    time and hydrated, assets are precompressed (Brotli, gzip) and cached as immutable, the
+    interface fonts are subset, code is highlighted in a Web Worker, and everything not needed
+    for the first paint loads on demand.
 - **Deployment for the platform itself**: a Kustomize base and AWS Terraform (ECS Fargate, ALB,
   RDS, Secrets Manager).
 - **CLI**: `autoswe generate "<spec>" --out ./project` runs the whole pipeline locally.
@@ -178,7 +187,7 @@ product page is at `/` and the studio at `/app`.
 
 ```bash
 uv run autoswe generate "A REST API for a small library where members borrow books and librarians track loans with due dates." --out ./library-api
-cd library-api && pip install -e . pytest httpx ruff && ruff check . && pytest
+cd library-api && uv run ruff check . && uv run pytest   # uv creates the project's own .venv
 ```
 
 ## Using Claude
@@ -194,11 +203,21 @@ call works as follows:
 - The static system prompt is marked cacheable.
 - `fallbacks: "default"` is enabled, so a model refusal is retried server-side. Disable it with
   `ANTHROPIC_SERVER_FALLBACKS=false`.
-- Refusals, truncation (`max_tokens`), schema mismatches, rate limits and auth errors surface as
-  typed errors and fail the job with a clear message.
+- Refusals, truncation (`max_tokens`), an exhausted context window, schema mismatches, rate
+  limits, overloads (including an `error` event in the middle of a stream) and auth errors surface
+  as typed errors and fail the job with a clear message; transient ones say the job can be
+  resubmitted.
+- Token counts include cache reads and writes, and every attempt of a server-side fallback
+  (`usage.iterations`).
 
-The Claude path is unit-tested against a fake SDK client: request shape, response parsing and the
-error mapping. It was **not** exercised against the live API while building this repository.
+What is tested, and what is not: `tests/test_anthropic_wire.py` runs the official `anthropic` SDK
+against a mocked HTTP transport that answers with Server-Sent Events in the documented Messages
+streaming shapes (thinking and text blocks, `fallback` blocks, `stop_details`, `usage.iterations`,
+mid-stream `error` events). It checks the exact request the SDK sends (URL, beta header, body) and
+how each response is handled; `tests/test_anthropic_provider.py` covers the provider's own logic
+with a stand-in client. No test calls the live API, and the Claude path was **not** run against
+it while building this repository, so whether the API accepts this request today, and whether its
+responses still look like this, is unverified.
 
 ## Configuration
 
@@ -235,7 +254,7 @@ Authenticate with `Authorization: Bearer <key>` or `X-API-Key: <key>`. Interacti
 | Method | Path | Description |
 | --- | --- | --- |
 | `POST` | `/api/v1/jobs` | Submit `{spec, title?, provider?}`; returns `202` with the job |
-| `GET` | `/api/v1/jobs` | Your jobs, newest first (`limit`, `before` cursor) |
+| `GET` | `/api/v1/jobs` | Your jobs, newest first (`limit`; page with `before` and `before_id` from `next_cursor` and `next_cursor_id`) |
 | `GET` | `/api/v1/jobs/{id}` | Status, per-stage progress, durations, tokens, validation summary |
 | `GET` | `/api/v1/jobs/{id}/events` | **SSE** stream; replays history, follows live, ends with `end` |
 | `GET` | `/api/v1/jobs/{id}/requirements` | Requirements artifact |
@@ -279,32 +298,38 @@ development its Docker image was also built and run, and it reported `healthy`.
 
 ```bash
 uv run ruff check . && uv run ruff format --check . && uv run mypy   # lint, format, strict types
-uv run pytest -q                                                      # 147 tests
-cd frontend && npm run lint && npm run typecheck && npm test && npm run build   # 17 unit tests
-npm run e2e        # in frontend/, after the build: 17 Playwright + axe tests on the real stack
+uv run pytest -q                                                      # 231 tests
+cd frontend && npm run lint && npm run typecheck && npm test && npm run build   # 27 unit tests
+npm run e2e        # in frontend/, after the build: 24 Playwright + axe tests on the real stack
 ```
 
 The backend tests cover:
 
-- Agent pipeline behaviour, including repair rounds, stage file ownership, and rejection of unsafe
-  paths produced by the LLM.
+- Agent pipeline behaviour, including repair rounds, stage file ownership (case-insensitive), and
+  rejection of unsafe paths produced by the LLM, including names unsafe only on Windows or macOS.
 - Every validator.
 - The offline heuristics.
 - API behaviour and validation errors.
 - Per-principal isolation and auth edge cases.
-- SSE replay and resume.
-- Queue semantics: concurrent claim races, cancellation of a running job, crash containment,
-  requeue on shutdown, stale-job reaping, and two app replicas sharing one database.
-- Metrics, headers, the SPA fallback and path traversal.
+- SSE replay and resume, including malformed `Last-Event-ID` headers.
+- Queue semantics: concurrent claim races, a cancel racing a claim, cancellation of a running job,
+  crash containment, requeue on shutdown, stale-job reaping (a reaped job keeps its outcome), and
+  two app replicas sharing one database.
+- Metrics, security headers and the CSP, serving the UI (precompressed and immutable assets,
+  the page for each route) and path traversal.
 - That the migrations match the models.
-- The Anthropic provider (fake client).
+- The Anthropic provider: its own logic (stand-in client) and the real SDK over a mocked HTTP
+  transport (see [Using Claude](#using-claude)).
 - An end-to-end test that runs a generated project's own lint and tests.
 - That the product page's sample data still matches what the offline pipeline produces.
 
 The Playwright suite starts the real server (FastAPI, worker, offline provider) on port 5150
-and checks the product page and the studio: axe finds no serious or critical WCAG 2.2 AA
-issues in either theme at desktop and phone sizes, nothing overflows at 390px, a job runs live
-through all five agents, and the carousel, command palette, dialogs and not-found states work.
+and checks the product page and the studio. axe finds no serious or critical WCAG 2.2 AA issues
+on the product page (both themes, desktop and phone), the new-project page, a finished job (both
+themes), the command palette, the delete dialog and the not-found page. Nothing overflows at 390px
+or 320px; a job runs live through all five agents; the product page is complete without
+JavaScript; and the carousel, keyboard focus, appearance (including blocked storage), command
+palette, dialogs and not-found states work.
 Set `E2E_SERVER_COMMAND` if `uv` is not on your `PATH`.
 
 ## Deploying the platform
@@ -363,8 +388,11 @@ src/autoswe/
 │   └── registry.py
 ├── models.py, repository.py, db.py, migrations/   # SQLAlchemy 2.0 + Alembic
 ├── worker.py, events.py        # DB-backed queue, notifier
+├── web.py                      # serves the UI: page per route, precompressed immutable assets
 └── security.py, observability.py, logging_config.py, config.py, schemas.py
 frontend/                       # Vite + React + TypeScript + Tailwind UI
+├── boot.js                     # inline before first paint: theme, chunk preloads, early fetch
+├── scripts/                    # build steps: prerender pages, compress assets, subset fonts
 ├── src/landing/                # product page (/), sample.json = one real offline run
 ├── src/app/                    # studio (/app): shell, timeline, activity, command palette
 └── e2e/                        # Playwright + axe tests
