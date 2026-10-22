@@ -57,6 +57,9 @@ class Settings(BaseSettings):
 
     # --- LLM providers -------------------------------------------------------------------------
     llm_default_provider: Literal["auto", "anthropic", "offline"] = "auto"
+    # Demo pacing: the offline provider answers instantly, so live progress is hard to watch.
+    # A small delay per call (e.g. 1.5) makes each stage visible. 0 disables it.
+    offline_delay_s: float = Field(default=0.0, ge=0, le=10)
     anthropic_api_key: SecretStr | None = None
     # Enable the Anthropic provider without an explicit key (e.g. `ant auth login` profiles).
     anthropic_enabled: bool = False

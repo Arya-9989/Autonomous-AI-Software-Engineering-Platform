@@ -8,6 +8,7 @@ an LLM does.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from pydantic import BaseModel
@@ -73,7 +74,13 @@ class OfflineProvider:
     name = "offline"
     model = "offline-templates-v1"
 
+    def __init__(self, delay_s: float = 0.0) -> None:
+        # Optional pacing for demos (OFFLINE_DELAY_S); the answer itself does not change.
+        self.delay_s = delay_s
+
     async def generate[T: BaseModel](self, request: LLMRequest[T]) -> LLMResponse[T]:
+        if self.delay_s > 0:
+            await asyncio.sleep(self.delay_s)
         context = dict(request.context)
         result: BaseModel
         match request.agent:

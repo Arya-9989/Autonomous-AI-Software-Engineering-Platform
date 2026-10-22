@@ -42,7 +42,7 @@ class ProviderRegistry:
 
 
 def build_registry(settings: Settings) -> ProviderRegistry:
-    providers: dict[str, LLMProvider] = {"offline": OfflineProvider()}
+    providers: dict[str, LLMProvider] = {"offline": OfflineProvider(settings.offline_delay_s)}
     if settings.anthropic_configured:
         from autoswe.llm.anthropic_provider import AnthropicProvider  # noqa: PLC0415
 
