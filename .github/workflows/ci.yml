@@ -129,8 +129,9 @@ jobs:
           terraform fmt -check -recursive
           terraform init -backend=false -input=false
           terraform validate
-      - name: Platform Kubernetes manifests (kubeconform)
-        run: kubectl kustomize deploy/k8s | kubeconform -strict -summary -
+      - name: Platform Kubernetes manifests (kubeconform, KEDA CRDs from the CRDs catalog)
+        run: |
+          kubectl kustomize deploy/k8s | kubeconform -strict -summary \n            -schema-location default \n            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' -
       - name: Generate a sample project with the offline pipeline
         run: |
           uv sync --locked --python 3.12

@@ -126,7 +126,10 @@ Animated WebP (479 KB), with a shorter GIF for clients that cannot show WebP.</s
     interface fonts are subset, code is highlighted in a Web Worker, and everything not needed
     for the first paint loads on demand.
 - **Deployment for the platform itself**: a Kustomize base and AWS Terraform (ECS Fargate, ALB,
-  RDS, Secrets Manager).
+  RDS, Secrets Manager). In Kubernetes the API and the queue workers are separate Deployments, and
+  KEDA scales the workers on queue depth (queued plus running jobs, read from PostgreSQL); workers
+  drain on shutdown and requeue what they cannot finish
+  ([ADR 0006](docs/adr/0006-worker-deployment-with-keda.md)).
 - **CLI**: `autoswe generate "<spec>" --out ./project [--sandbox docker|local]` runs the whole
   pipeline locally; `autoswe eval run|record` and `autoswe usage` cover evals and the cost ledger.
 
@@ -320,6 +323,8 @@ All settings are environment variables (a `.env` file is read if present).
 | `ANTHROPIC_MAX_TOKENS` | `64000` | Output cap per agent call |
 | `ANTHROPIC_SERVER_FALLBACKS` | `true` | Server-side refusal fallbacks |
 | `WORKER_ENABLED` / `WORKER_CONCURRENCY` | `true` / `2` | In-process worker and its parallelism |
+| `WORKER_DRAIN_S` | `20` | On shutdown, how long running jobs may finish before the rest are requeued |
+| `SERVE_API` | `true` | `false` on worker-only processes (`autoswe worker` sets it) |
 | `MAX_ACTIVE_JOBS_PER_OWNER` | `3` | Queued and running jobs allowed per API key (`429` beyond) |
 | `MAX_REPAIR_ROUNDS` | `1` | Repair rounds after failed validation (0–3) |
 | `JOB_STALE_AFTER_S` | `300` | Running jobs without a heartbeat for this long are failed |
@@ -532,6 +537,10 @@ Set `E2E_SERVER_COMMAND` if `uv` is not on your `PATH`.
 **Kubernetes** (`deploy/k8s`, Kustomize). Includes:
 
 - Namespace with the `restricted` Pod Security level.
+- The API Deployment (`WORKER_ENABLED=false`, CPU-based HPA) and a separate `autoswe-worker`
+  Deployment running `autoswe worker`, with a KEDA `ScaledObject` on queue depth (1-10 replicas,
+  one per two queued or running jobs) and a `TriggerAuthentication` for its PostgreSQL scaler.
+  KEDA must be installed in the cluster.
 - A migration init container.
 - Startup, liveness and readiness probes.
 - Read-only root filesystem.
@@ -546,6 +555,18 @@ kubectl -n autoswe create secret generic autoswe \
   --from-literal=API_KEYS="ci:$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 cd deploy/k8s && kustomize edit set image autoswe=<registry>/autoswe:<tag> && kubectl apply -k .
 ```
+
+Add `--from-literal=KEDA_POSTGRES_CONNECTION='postgresql://keda_ro:...@host:5432/autoswe'` to the
+secret for the worker autoscaler (a role that can only read `jobs` is enough). To watch the
+scaling on a local kind cluster, which the script creates and deletes:
+
+```bash
+docker build -t autoswe:ci . && bash deploy/kind/scale-demo.sh
+```
+
+On this build it scaled the workers from 1 to 4 (the overlay's cap) for 10 queued jobs and back to
+1 afterwards, with every job succeeding, including 4 jobs that were running during a rolling
+restart of all workers.
 
 **AWS** (`deploy/terraform`). Provisions:
 
@@ -562,7 +583,9 @@ It deploys into an existing VPC. Copy `example.tfvars` to `terraform.tfvars`, th
 holds secrets.
 
 Validation status: both directories pass `terraform validate` / `terraform fmt -check` and
-`kubeconform -strict` in CI. They have **not** been applied to a real cluster or AWS account.
+`kubeconform -strict` in CI (KEDA's CRDs from the CRDs catalog). The Kubernetes base has run on a
+local kind cluster (`deploy/kind`); neither has been applied to a production cluster or an AWS
+account.
 
 ## Project structure
 
@@ -586,7 +609,7 @@ src/autoswe/
 │   ├── offline/                # deterministic analysis, blueprint and templates
 │   └── registry.py
 ├── models.py, repository.py, db.py, migrations/   # SQLAlchemy 2.0 + Alembic
-├── worker.py, events.py        # DB-backed queue, notifier
+├── worker.py, events.py        # DB-backed queue (drains on shutdown), notifier
 ├── web.py                      # serves the UI: page per route, precompressed immutable assets
 └── security.py, observability.py, logging_config.py, config.py, schemas.py
 frontend/                       # Vite + React + TypeScript + Tailwind UI
@@ -609,9 +632,10 @@ tests/                          # pytest suite
   at-most-once execution across replicas with no extra infrastructure. The trade-off is that
   workers poll, which fits long-running LLM jobs but not very high-throughput queues; a broker
   would be the next step there.
-- **The worker runs in-process with the API.** This keeps deployment to one image and one
-  Deployment. Splitting them later only needs `WORKER_ENABLED=false` on API pods and a worker
-  Deployment.
+- **One image, two roles.** Locally and in compose the worker runs in-process with the API, so
+  there is one process to start. In Kubernetes the same image runs as an API Deployment
+  (`WORKER_ENABLED=false`) and a worker Deployment (`autoswe worker`), so each scales on its own
+  signal: CPU for the API, queue depth (KEDA) for the workers.
 - **SSE over WebSockets.** Progress flows one way, and SSE gives automatic reconnection with
   `Last-Event-ID`, which maps directly onto the persisted event log. The UI uses `fetch` streaming,
   so the API key travels in a header rather than the URL.
@@ -649,7 +673,6 @@ tests/                          # pytest suite
 
 - Relationships between entities and Alembic migrations in generated projects.
 - More target stacks (TypeScript/Node, Go) with matching validators.
-- A separate worker Deployment with KEDA autoscaling on queue depth.
 
 ## License
 

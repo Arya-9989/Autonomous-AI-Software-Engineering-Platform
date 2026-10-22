@@ -1,0 +1,75 @@
+# A local overlay of deploy/k8s for proving KEDA scaling on a kind cluster (see scale-demo.sh).
+# It uses the locally built image, an in-cluster PostgreSQL (postgres.yaml, applied separately
+# because the autoswe namespace enforces the restricted Pod Security level), demo credentials,
+# offline jobs slowed down so the queue builds up, and fast KEDA reactions.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../k8s
+images:
+  - name: ghcr.io/arya-9989/autoswe
+    newName: autoswe
+    newTag: ci
+secretGenerator:
+  - name: autoswe
+    namespace: autoswe
+    literals:
+      - DATABASE_URL=postgresql+asyncpg://autoswe:kind-demo-only@postgres.autoswe-db.svc:5432/autoswe
+      - API_KEYS=demo:kind-demo-api-key-0123456789
+      - KEDA_POSTGRES_CONNECTION=postgresql://autoswe:kind-demo-only@postgres.autoswe-db.svc:5432/autoswe?sslmode=disable
+    options:
+      disableNameSuffixHash: true
+patches:
+  - target:
+      kind: ConfigMap
+      name: autoswe
+    patch: |-
+      - op: add
+        path: /data/OFFLINE_DELAY_S
+        value: "3"
+      - op: add
+        path: /data/LLM_DEFAULT_PROVIDER
+        value: offline
+      - op: add
+        path: /data/MAX_ACTIVE_JOBS_PER_OWNER
+        value: "20"
+  - target:
+      kind: ScaledObject
+      name: autoswe-worker
+    patch: |-
+      - op: replace
+        path: /spec/maxReplicaCount
+        value: 4
+      - op: replace
+        path: /spec/advanced/horizontalPodAutoscalerConfig/behavior/scaleDown/stabilizationWindowSeconds
+        value: 30
+      - op: replace
+        path: /spec/advanced/horizontalPodAutoscalerConfig/behavior/scaleDown/policies/0/periodSeconds
+        value: 15
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: autoswe
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 1
+  - target:
+      kind: Deployment
+      name: autoswe
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests
+        value: {cpu: 100m, memory: 192Mi}
+  - target:
+      kind: Deployment
+      name: autoswe-worker
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests
+        value: {cpu: 100m, memory: 160Mi}
+      - op: replace
+        path: /spec/template/spec/containers/0/env/0/value
+        value: "20"

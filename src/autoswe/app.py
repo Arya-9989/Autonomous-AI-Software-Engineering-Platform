@@ -93,6 +93,7 @@ def create_app(
                 concurrency=settings.worker_concurrency,
                 poll_interval_s=settings.worker_poll_interval_s,
                 stale_after_s=settings.job_stale_after_s,
+                drain_s=settings.worker_drain_s,
             )
             await worker.start()
         services.worker = worker
@@ -182,6 +183,8 @@ def create_app(
         )
 
     app.include_router(system.router)
+    if not settings.serve_api:  # a worker-only process: probes and metrics, nothing else
+        return app
     app.include_router(jobs.router)
     app.include_router(usage.router)
 

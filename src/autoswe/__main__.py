@@ -1,6 +1,7 @@
 """Command-line entry point.
 
 * ``autoswe serve``    - API, UI and in-process worker (default)
+* ``autoswe worker``   - the queue worker only, with health, readiness and metrics endpoints
 * ``autoswe migrate``  - apply database migrations and exit
 * ``autoswe generate`` - run the pipeline once, locally, and write the project to a directory
 * ``autoswe sandbox-runner`` - the sandbox runner service (the only process with Docker access)
@@ -109,6 +110,7 @@ def main(argv: list[str] | None = None) -> None:
     serve = sub.add_parser("serve", help="Run the API, UI and in-process worker (default)")
     serve.add_argument("--reload", action="store_true", help="Auto-reload on code changes (dev)")
     sub.add_parser("migrate", help="Apply database migrations and exit")
+    sub.add_parser("worker", help="Run only the queue worker (health, readiness, metrics)")
     generate = sub.add_parser("generate", help="Run the pipeline once and write the project")
     generate.add_argument("spec", help="Specification text, or @path to read it from a file")
     generate.add_argument("--out", type=Path, required=True, help="Output directory")
@@ -153,6 +155,19 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "migrate":
         configure_logging(settings.log_level, settings.log_format)
         upgrade_to_head(settings.database_url)
+        return
+    if args.command == "worker":
+        from autoswe.app import create_app  # noqa: PLC0415
+
+        worker_settings = settings.model_copy(update={"serve_api": False, "worker_enabled": True})
+        uvicorn.run(
+            create_app(worker_settings),
+            host=settings.host,
+            port=settings.port,
+            proxy_headers=False,
+            log_config=None,
+            timeout_graceful_shutdown=5,  # no long-lived streams on a worker
+        )
         return
     uvicorn.run(
         "autoswe.app:create_app",

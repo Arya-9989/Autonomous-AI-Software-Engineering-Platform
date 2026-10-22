@@ -202,3 +202,50 @@ async def test_reaped_job_keeps_its_outcome_when_the_worker_returns(
     )
     terminal = [e["event"] for e in events if e["event"] in {"job.failed", "job.succeeded"}]
     assert terminal == ["job.failed"]
+
+
+async def test_shutdown_drains_jobs_that_finish_in_time(harness_factory: HarnessFactory) -> None:
+    provider = ScriptedProvider()
+    entered, gate = provider.pause("coder")
+    harness = await harness_factory(registry=registry_with(provider), worker_drain_s=10)
+    job_id = (await harness.submit())["id"]
+    await asyncio.wait_for(entered.wait(), 5)
+
+    stopping = asyncio.create_task(harness.worker.stop())  # SIGTERM while a job runs
+    await asyncio.sleep(0.2)
+    assert not stopping.done()  # it waits for the job instead of cancelling it
+    gate.set()
+    await asyncio.wait_for(stopping, 10)
+    job = (await harness.client.get(f"/api/v1/jobs/{job_id}", headers=ALICE)).json()
+    assert job["status"] == "succeeded"
+
+
+async def test_a_stopping_worker_claims_nothing_new_and_requeues_what_outlives_the_drain(
+    harness_factory: HarnessFactory,
+) -> None:
+    provider = ScriptedProvider()
+    entered, _gate = provider.pause("coder")  # never released: outlives the drain
+    harness = await harness_factory(
+        registry=registry_with(provider), worker_drain_s=0.3, worker_concurrency=1
+    )
+    first = (await harness.submit())["id"]
+    await asyncio.wait_for(entered.wait(), 5)
+    second = (await harness.submit())["id"]  # waits: the only slot is busy
+
+    await harness.worker.stop()
+
+    for job_id in (first, second):
+        job = (await harness.client.get(f"/api/v1/jobs/{job_id}", headers=ALICE)).json()
+        assert job["status"] == "queued", job_id  # handed back, not lost
+
+
+async def test_a_worker_only_process_serves_probes_and_metrics_only(
+    harness_factory: HarnessFactory,
+) -> None:
+    harness = await harness_factory(serve_api=False)
+    assert (await harness.client.get("/healthz")).status_code == 200
+    ready = await harness.client.get("/readyz")
+    assert ready.json()["checks"] == {"database": "ok", "worker": "ok"}
+    assert (await harness.client.get("/metrics")).status_code == 200
+    assert (await harness.client.get("/api/v1/jobs", headers=ALICE)).status_code == 404
+    assert (await harness.client.post("/api/v1/jobs", json={}, headers=ALICE)).status_code == 404

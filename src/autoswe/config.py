@@ -104,7 +104,11 @@ class Settings(SandboxSettings):
     auth_disabled: bool = False
 
     # --- worker --------------------------------------------------------------------------------
+    # false on worker-only processes (`autoswe worker`): only health, readiness and metrics.
+    serve_api: bool = True
     worker_enabled: bool = True
+    # On shutdown, let in-flight jobs finish for up to this long before requeueing the rest.
+    worker_drain_s: float = Field(default=20.0, ge=0, le=600)
     worker_concurrency: int = Field(default=2, ge=1, le=32)
     worker_poll_interval_s: float = Field(default=1.0, gt=0)
     job_stale_after_s: float = Field(default=300.0, gt=0)

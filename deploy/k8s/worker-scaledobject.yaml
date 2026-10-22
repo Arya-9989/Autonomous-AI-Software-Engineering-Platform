@@ -1,0 +1,39 @@
+# KEDA scales the workers on queue depth: one replica per WORKER_CONCURRENCY (2) queued or
+# running jobs, between 1 and 10. Running jobs count too, so a busy worker is not scaled away
+# while it still has work; when one is, it drains and requeues (see worker-deployment.yaml).
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: autoswe-worker
+spec:
+  scaleTargetRef:
+    name: autoswe-worker
+  minReplicaCount: 1
+  maxReplicaCount: 10
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 120
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 60
+  triggers:
+    - type: postgresql
+      metadata:
+        query: "SELECT COUNT(*) FROM jobs WHERE status IN ('queued', 'running')"
+        targetQueryValue: "2"
+        activationTargetQueryValue: "0"
+      authenticationRef:
+        name: autoswe-worker-db
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: autoswe-worker-db
+spec:
+  secretTargetRef:
+    - parameter: connection
+      name: autoswe
+      key: KEDA_POSTGRES_CONNECTION

@@ -39,6 +39,7 @@ class Worker:
         concurrency: int,
         poll_interval_s: float,
         stale_after_s: float,
+        drain_s: float = 0.0,
     ) -> None:
         self.id = f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:6]}"
         self._db = db
@@ -47,6 +48,7 @@ class Worker:
         self._concurrency = concurrency
         self._poll_interval_s = poll_interval_s
         self._stale_after = timedelta(seconds=stale_after_s)
+        self._drain_s = drain_s
         self._tasks: dict[str, asyncio.Task[object]] = {}
         self._loop_task: asyncio.Task[None] | None = None
         self._stopping = False
@@ -115,14 +117,24 @@ class Worker:
             await asyncio.gather(*self._tasks.values(), return_exceptions=True)
 
     async def stop(self) -> None:
+        """Graceful shutdown: stop claiming, drain, then hand back what is still running.
+
+        Jobs that finish within ``drain_s`` complete normally; the rest are cancelled, and the
+        orchestrator's cancellation handler requeues them for another worker. Either way no job
+        is lost; a hard kill (no SIGTERM handling) is covered by the stale-job reaper.
+        """
         self._stopping = True
         if self._loop_task is not None:
             self._loop_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._loop_task
-        # In-flight jobs are requeued by the orchestrator's cancellation handler.
-        for task in list(self._tasks.values()):
+        if self._tasks and self._drain_s > 0:
+            logger.info("draining in-flight jobs",
+                        extra={"jobs": len(self._tasks), "drain_s": self._drain_s})  # fmt: skip
+            await asyncio.wait(list(self._tasks.values()), timeout=self._drain_s)
+        remaining = [task for task in self._tasks.values() if not task.done()]
+        for task in remaining:
             task.cancel()
         if self._tasks:
             await asyncio.gather(*self._tasks.values(), return_exceptions=True)
-        logger.info("worker stopped", extra={"worker_id": self.id})
+        logger.info("worker stopped", extra={"worker_id": self.id, "requeued": len(remaining)})

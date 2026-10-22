@@ -26,7 +26,7 @@ spec:
     spec:
       serviceAccountName: autoswe
       automountServiceAccountToken: false
-      # In-flight jobs are requeued on SIGTERM; give the worker time to hand them back.
+      # Open SSE streams get up to 30 s to close on SIGTERM.
       terminationGracePeriodSeconds: 45
       securityContext:
         runAsNonRoot: true
@@ -69,6 +69,10 @@ spec:
           ports:
             - name: http
               containerPort: 8000
+          env:
+            # Jobs run in the autoswe-worker Deployment, scaled by KEDA on queue depth.
+            - name: WORKER_ENABLED
+              value: "false"
           envFrom:
             - configMapRef:
                 name: autoswe

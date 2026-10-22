@@ -2,6 +2,7 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 
 from autoswe.__main__ import main
@@ -66,3 +67,35 @@ async def test_usage_command_prints_the_ledger(
     out = capsys.readouterr().out
     line = next(row for row in out.splitlines() if row.startswith("alice"))
     assert "6000" in line and "1000000" in line and "0.029100" in line
+
+
+def test_worker_command_runs_a_worker_only_app(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from autoswe.config import get_settings
+
+    started: dict[str, Any] = {}
+
+    def fake_run(app: Any, **kwargs: Any) -> None:
+        started["app"], started["kwargs"] = app, kwargs
+
+    monkeypatch.setattr("autoswe.__main__.uvicorn.run", fake_run)
+    monkeypatch.setenv("AUTH_DISABLED", "true")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{(tmp_path / 'w.db').as_posix()}")
+    get_settings.cache_clear()
+    try:
+        main(["worker"])
+    finally:
+        get_settings.cache_clear()
+    services = started["app"].state.services
+    assert services.settings.serve_api is False and services.settings.worker_enabled is True
+
+    async def probe(path: str) -> int:
+        transport = httpx.ASGITransport(app=started["app"])
+        async with httpx.AsyncClient(transport=transport, base_url="http://w") as client:
+            return (await client.get(path)).status_code
+
+    assert asyncio.run(probe("/healthz")) == 200
+    assert asyncio.run(probe("/metrics")) == 200
+    assert asyncio.run(probe("/api/v1/jobs")) == 404  # no API on a worker
+    assert started["kwargs"]["timeout_graceful_shutdown"] == 5
