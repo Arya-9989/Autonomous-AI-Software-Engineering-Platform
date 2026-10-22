@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import { toast } from "sonner";
+import { toast } from "../lib/toast";
 
 import { api } from "../lib/api";
 import { ancestors, buildTree, defaultFile, type TreeNode } from "../lib/fileTree";

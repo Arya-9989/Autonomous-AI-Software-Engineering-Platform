@@ -1,7 +1,7 @@
 import { ArrowRight, Check, Copy } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
-import { toast } from "sonner";
+import { toast } from "../lib/toast";
 
 import { pill } from "../lib/pill";
 import { REPO_URL } from "./links";

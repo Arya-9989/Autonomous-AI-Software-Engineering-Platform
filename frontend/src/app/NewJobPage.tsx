@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUp } from "lucide-react";
 import { useEffect, useId, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
-import { toast } from "sonner";
+import { toast } from "../lib/toast";
 
 import { PipelineRail } from "../components/PipelineRail";
 import { Button, ErrorState } from "../components/ui";

@@ -44,6 +44,7 @@ export function GlobalNav() {
             <span className="max-sm:sr-only">GitHub</span>
           </a>
           <IconButton
+            tip="end"
             label={theme === "dark" ? "Switch to light appearance" : "Switch to dark appearance"}
             onClick={toggle}
           >

@@ -1,21 +1,33 @@
 import { useQuery } from "@tanstack/react-query";
 import { BookOpen, KeyRound, Menu, Moon, Plus, Search, Sun, X } from "lucide-react";
-import { domMax, LazyMotion, MotionConfig } from "motion/react";
+import { LazyMotion, MotionConfig } from "motion/react";
 import { Dialog } from "radix-ui";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState, useSyncExternalStore } from "react";
 import { Link, Route, Routes, useLocation } from "react-router";
 
 import { Logo } from "../components/Logo";
 import { Badge, IconButton } from "../components/ui";
 import { api, getApiKey } from "../lib/api";
 import { cx } from "../lib/cx";
+import { whenIdle } from "../lib/idle";
 import { useTheme } from "../lib/theme";
 import { ApiKeyDialog } from "./ApiKeyDialog";
-import { CommandPalette } from "./CommandPalette";
 import { JobList } from "./JobList";
 import { JobPage } from "./JobPage";
 import { NewJobPage } from "./NewJobPage";
 import { NotFound } from "./NotFound";
+
+// The shortcut label depends on the platform; the prerendered HTML says Ctrl K and hydration
+// switches it on Apple devices without a mismatch.
+const noSubscription = () => () => {};
+const detectMac = () => /Mac|iPhone|iPad/.test(navigator.platform);
+
+// The command menu (cmdk) is code nobody needs for the first paint: fetched when the page is
+// idle, rendered from the first time it opens.
+const loadPalette = () => import("./CommandPalette");
+const CommandPalette = lazy(() => loadPalette().then((module) => ({ default: module.CommandPalette })));
+
+const loadMotionFeatures = () => import("../lib/motionFeatures").then((module) => module.default);
 
 function Sidebar() {
   return (
@@ -42,6 +54,13 @@ export default function AppShell({ notFound = false }: { notFound?: boolean }) {
   const [theme, toggleTheme] = useTheme();
   const [drawerPath, setDrawerPath] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // Stays mounted after the first open, so closing animates like any dialog.
+  const [paletteUsed, setPaletteUsed] = useState(false);
+  const openPalette = () => {
+    setPaletteUsed(true);
+    setPaletteOpen(true);
+  };
+  useEffect(() => whenIdle(() => void loadPalette()), []);
   const [keyDialog, setKeyDialog] = useState<"open" | "closed" | "auto">("auto");
   const location = useLocation();
   const info = useQuery({ queryKey: ["info"], queryFn: api.info, staleTime: 60_000 });
@@ -58,6 +77,7 @@ export default function AppShell({ notFound = false }: { notFound?: boolean }) {
     const onKey = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
+        setPaletteUsed(true);
         setPaletteOpen((open) => !open);
       }
     };
@@ -65,10 +85,10 @@ export default function AppShell({ notFound = false }: { notFound?: boolean }) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+  const isMac = useSyncExternalStore(noSubscription, detectMac, () => false);
 
   return (
-    <LazyMotion features={domMax} strict>
+    <LazyMotion features={loadMotionFeatures} strict>
       <MotionConfig reducedMotion="user">
         <div className="flex min-h-dvh flex-col bg-surface-2 dark:bg-canvas">
           <a
@@ -79,7 +99,7 @@ export default function AppShell({ notFound = false }: { notFound?: boolean }) {
           </a>
           <header className="sticky top-0 z-30 border-b border-hairline bg-[var(--nav-bg)] backdrop-blur-xl backdrop-saturate-[1.8]">
             <div className="flex h-12 items-center gap-2 px-3 sm:px-4">
-              <IconButton label="Show jobs" className="lg:hidden" onClick={() => setDrawer(true)}>
+              <IconButton label="Show jobs" tip="start" className="lg:hidden" onClick={() => setDrawer(true)}>
                 <Menu className="size-5" />
               </IconButton>
               <Logo to="/" className="px-1" />
@@ -95,7 +115,7 @@ export default function AppShell({ notFound = false }: { notFound?: boolean }) {
 
               <button
                 type="button"
-                onClick={() => setPaletteOpen(true)}
+                onClick={openPalette}
                 className="ml-auto flex h-9 min-w-11 items-center gap-2 rounded-full bg-surface px-3 text-[14px] tracking-[-0.016em] text-ink-2 ring-1 ring-hairline transition-colors hover:text-ink hover:ring-hairline-strong pointer-coarse:h-11 md:ml-4 md:w-72"
                 aria-keyshortcuts={isMac ? "Meta+K" : "Control+K"}
               >
@@ -120,11 +140,12 @@ export default function AppShell({ notFound = false }: { notFound?: boolean }) {
                   </span>
                 )}
                 {info.data?.auth_required && (
-                  <IconButton label="Set API key" onClick={() => setKeyDialog("open")}>
+                  <IconButton label="Set API key" tip="end" onClick={() => setKeyDialog("open")}>
                     <KeyRound className="size-4" />
                   </IconButton>
                 )}
                 <IconButton
+                  tip="end"
                   label={theme === "dark" ? "Switch to light appearance" : "Switch to dark appearance"}
                   onClick={toggleTheme}
                 >
@@ -189,7 +210,11 @@ export default function AppShell({ notFound = false }: { notFound?: boolean }) {
           </div>
 
           <ApiKeyDialog open={keyDialogOpen} onClose={() => setKeyDialog("closed")} />
-          <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+          {(paletteOpen || paletteUsed) && (
+            <Suspense fallback={null}>
+              <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+            </Suspense>
+          )}
         </div>
       </MotionConfig>
     </LazyMotion>

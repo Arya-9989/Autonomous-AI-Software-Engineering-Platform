@@ -5,28 +5,26 @@ import { Link } from "react-router";
 import { PipelineRail } from "../components/PipelineRail";
 import { pill } from "../lib/pill";
 import { cx } from "../lib/cx";
+import { useReducedMotion } from "../lib/useReducedMotion";
 import type { StageStatus } from "../lib/types";
 import { sample } from "./sample";
 
 const STEP_MS = 620;
 const STAGES = sample.stages.length;
 
-function reducedMotion(): boolean {
-  return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
-
 /**
  * Replays the real offline run once (about three seconds, then it stops): each agent starts,
  * reports its real summary and hands over. Reduced motion shows the finished run immediately.
  */
 function useReplay() {
+  const reduce = useReducedMotion();
   // step = number of finished stages; STAGES means the run is complete.
-  const [step, setStep] = useState(() => (reducedMotion() ? STAGES : 0));
+  const [step, setStep] = useState(0);
   const [run, setRun] = useState(0);
   const timer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
-    if (reducedMotion()) return;
+    if (reduce) return;
     let current = 0;
     const tick = () => {
       current += 1;
@@ -35,13 +33,14 @@ function useReplay() {
     };
     timer.current = window.setTimeout(tick, 700);
     return () => window.clearTimeout(timer.current);
-  }, [run]);
+  }, [run, reduce]);
 
   const replay = () => {
     setStep(0);
     setRun((value) => value + 1);
   };
-  return { step, done: step >= STAGES, replay };
+  const shown = reduce ? STAGES : step;
+  return { step: shown, done: shown >= STAGES, replay };
 }
 
 function HeroPanel() {

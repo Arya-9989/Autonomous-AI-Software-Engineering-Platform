@@ -1,5 +1,4 @@
 import { AlertTriangle, Loader2, RotateCw } from "lucide-react";
-import { Tooltip as RadixTooltip } from "radix-ui";
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 
 import { cx } from "../lib/cx";
@@ -38,47 +37,52 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   );
 });
 
-export function Tooltip({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <RadixTooltip.Root>
-      <RadixTooltip.Trigger asChild>{children}</RadixTooltip.Trigger>
-      <RadixTooltip.Portal>
-        <RadixTooltip.Content
-          sideOffset={6}
-          className="z-50 rounded-lg bg-ink px-2.5 py-1.5 text-[12px] leading-4 font-medium tracking-[-0.01em] text-canvas shadow-lg"
-        >
-          {label}
-        </RadixTooltip.Content>
-      </RadixTooltip.Portal>
-    </RadixTooltip.Root>
-  );
-}
-
 interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   label: string;
   children: ReactNode;
+  /** Which edge of the button the tooltip lines up with; "end" keeps it on screen at the right. */
+  tip?: "start" | "center" | "end";
 }
 
-/** Icon-only button with an accessible name and a tooltip; 44px hit target on touch. */
+const TIP_ALIGN = {
+  start: "left-0",
+  center: "left-1/2 -translate-x-1/2",
+  end: "right-0",
+} as const;
+
+/**
+ * Icon-only button: the label is its accessible name and, for sighted mouse and keyboard
+ * users, a small tooltip (after a short hover, or at once on keyboard focus). The tooltip is
+ * pure CSS and aria-hidden, since the name is already announced; it is not shown on touch
+ * screens. 44px hit target on touch.
+ */
 export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton(
-  { label, children, className, ...props },
+  { label, children, className, tip = "center", ...props },
   ref,
 ) {
   return (
-    <Tooltip label={label}>
-      <button
-        ref={ref}
-        type="button"
-        aria-label={label}
+    <button
+      ref={ref}
+      type="button"
+      aria-label={label}
+      className={cx(
+        "group/tip relative inline-grid size-9 shrink-0 place-items-center rounded-full text-ink-2 transition-colors duration-200 ease-apple hover:bg-ink/[0.07] hover:text-ink pointer-coarse:size-11",
+        className,
+      )}
+      {...props}
+    >
+      {children}
+      <span
+        aria-hidden
         className={cx(
-          "inline-grid size-9 shrink-0 place-items-center rounded-full text-ink-2 transition-colors duration-200 ease-apple hover:bg-ink/[0.07] hover:text-ink pointer-coarse:size-11",
-          className,
+          "pointer-events-none absolute top-full z-50 mt-1.5 hidden rounded-lg bg-ink px-2.5 py-1.5 text-[12px] leading-4 font-medium tracking-[-0.01em] whitespace-nowrap text-canvas shadow-lg",
+          "group-hover/tip:block group-hover/tip:animate-[fade-in_160ms_ease-out_400ms_both] group-focus-visible/tip:block pointer-coarse:!hidden",
+          TIP_ALIGN[tip],
         )}
-        {...props}
       >
-        {children}
-      </button>
-    </Tooltip>
+        {label}
+      </span>
+    </button>
   );
 });
 

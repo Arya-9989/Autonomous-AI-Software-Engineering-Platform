@@ -2,6 +2,7 @@ import { Pause, Play } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { cx } from "../lib/cx";
+import { useReducedMotion } from "../lib/useReducedMotion";
 import { AGENTS } from "../lib/stages";
 import { sample } from "./sample";
 
@@ -183,7 +184,7 @@ const TILES: { title: ReactNode; visual: ReactNode }[] = [
             ["Unpinned base images", "Dockerfile"],
             ["Unpinned actions", "GitHub Actions"],
             ["Hard-coded credentials", "AWS, Anthropic and GitHub keys, private keys"],
-            ["Unsafe paths", "Absolute paths and �..� escapes are rejected"],
+            ["Unsafe paths", "Absolute paths, “..” and .git in any letter case"],
           ].map(([rule, scope]) => (
             <li key={rule} className="rounded-2xl bg-canvas/70 px-4 py-3 ring-1 ring-hairline">
               <p className="text-[17px] leading-6 font-medium text-ink">{rule}</p>
@@ -201,19 +202,22 @@ export function Highlights() {
   const track = useRef<HTMLUListElement>(null);
   const section = useRef<HTMLElement>(null);
   const [index, setIndex] = useState(0);
-  const [playing, setPlaying] = useState(
-    () => typeof window === "undefined" || !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
-  );
+  const reduce = useReducedMotion();
+  // null until the reader presses play or pause: autoplay by default, not with reduced motion.
+  const [choice, setPlaying] = useState<boolean | null>(null);
+  const playing = choice ?? !reduce;
   const [inView, setInView] = useState(false);
   const [hovering, setHovering] = useState(false);
 
-  const go = useCallback((target: number) => {
-    const element = track.current;
-    const tile = element?.children[target] as HTMLElement | undefined;
-    if (!element || !tile) return;
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    element.scrollTo({ left: tile.offsetLeft - element.offsetLeft, behavior: reduce ? "auto" : "smooth" });
-  }, []);
+  const go = useCallback(
+    (target: number) => {
+      const element = track.current;
+      const tile = element?.children[target] as HTMLElement | undefined;
+      if (!element || !tile) return;
+      element.scrollTo({ left: tile.offsetLeft - element.offsetLeft, behavior: reduce ? "auto" : "smooth" });
+    },
+    [reduce],
+  );
 
   // Keep the pager in sync with manual swipes and scrolls.
   useEffect(() => {
@@ -313,7 +317,7 @@ export function Highlights() {
           </div>
           <button
             type="button"
-            onClick={() => setPlaying((value) => !value)}
+            onClick={() => setPlaying(!playing)}
             aria-label={playing ? "Pause highlights" : "Play highlights"}
             className="grid size-14 place-items-center rounded-full bg-surface text-ink shadow-[var(--shadow-tile)] transition-colors hover:bg-raised"
           >

@@ -54,16 +54,31 @@ async function errorFrom(response: Response): Promise<ApiError> {
   return new ApiError(response.status, message);
 }
 
+declare global {
+  interface Window {
+    /** A GET that boot.js started before the scripts loaded (job pages), used at most once. */
+    __autosweEarly?: { url: string; response: Promise<Response> };
+  }
+}
+
+function takeEarly(path: string, init: RequestInit): Promise<Response> | null {
+  const early = typeof window === "undefined" ? undefined : window.__autosweEarly;
+  if (!early || early.url !== path || (init.method ?? "GET") !== "GET") return null;
+  window.__autosweEarly = undefined;
+  return early.response;
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, {
-    ...init,
-    headers: {
-      Accept: "application/json",
-      ...(init.body ? { "Content-Type": "application/json" } : {}),
-      ...authHeaders(),
-      ...init.headers,
-    },
-  });
+  const response = await (takeEarly(path, init) ??
+    fetch(path, {
+      ...init,
+      headers: {
+        Accept: "application/json",
+        ...(init.body ? { "Content-Type": "application/json" } : {}),
+        ...authHeaders(),
+        ...init.headers,
+      },
+    }));
   if (!response.ok) throw await errorFrom(response);
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;

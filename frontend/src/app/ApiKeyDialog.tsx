@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { KeyRound } from "lucide-react";
 import { Dialog } from "radix-ui";
 import { useState, type FormEvent } from "react";
-import { toast } from "sonner";
+import { toast } from "../lib/toast";
 
 import { Button } from "../components/ui";
 import { getApiKey, setApiKey } from "../lib/api";

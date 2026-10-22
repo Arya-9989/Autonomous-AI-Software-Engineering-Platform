@@ -3,6 +3,8 @@ import { useCallback, useSyncExternalStore } from "react";
 const STORAGE = "autoswe.theme";
 export type Theme = "light" | "dark";
 
+export const THEME_COLOR: Record<Theme, string> = { light: "#ffffff", dark: "#000000" };
+
 const listeners = new Set<() => void>();
 const notify = () => listeners.forEach((listener) => listener());
 
@@ -24,11 +26,15 @@ function apply(theme: Theme): void {
   const root = document.documentElement;
   root.classList.add("theme-switching");
   root.classList.toggle("dark", theme === "dark");
+  // The browser chrome follows the page, not just the OS (boot.js does the same at first paint).
+  document
+    .querySelectorAll('meta[name="theme-color"]')
+    .forEach((meta) => meta.setAttribute("content", THEME_COLOR[theme]));
   notify();
   requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove("theme-switching")));
 }
 
-// Follow the OS until the reader picks a theme explicitly (public/theme-init.js sets the first paint).
+// Follow the OS until the reader picks a theme explicitly (boot.js sets the first paint).
 if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (event) => {
     if (!stored()) apply(event.matches ? "dark" : "light");

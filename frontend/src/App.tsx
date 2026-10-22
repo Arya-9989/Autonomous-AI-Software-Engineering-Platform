@@ -1,14 +1,14 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Tooltip } from "radix-ui";
 import { lazy, Suspense } from "react";
-import { BrowserRouter, Navigate, Route, Routes, useParams } from "react-router";
-import { Toaster } from "sonner";
+import { BrowserRouter, Navigate, Route, Routes, StaticRouter, useParams } from "react-router";
 
 import { ApiError } from "./lib/api";
 import { useTheme } from "./lib/theme";
-import LandingPage from "./landing/LandingPage";
+import { Toaster } from "./lib/toast";
 
-// The landing page ships in the entry chunk (it is the LCP); the app loads on demand.
+// Both halves load on demand: boot.js preloads the one the current URL needs, in parallel with
+// the entry, and the prerendered HTML is on screen meanwhile (hydration waits for the chunk).
+const LandingPage = lazy(() => import("./landing/LandingPage"));
 const AppShell = lazy(() => import("./app/AppShell"));
 
 const queryClient = new QueryClient({
@@ -31,21 +31,27 @@ function AppFallback() {
   return <div className="min-h-dvh bg-canvas" aria-busy="true" />;
 }
 
-export function App() {
+/** `location` renders a fixed URL (build-time prerendering of the product page). */
+export function App({ location }: { location?: string }) {
   const [theme] = useTheme();
+  const routes = (
+    <Suspense fallback={<AppFallback />}>
+      <Routes>
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/jobs/:jobId" element={<LegacyJobRedirect />} />
+        <Route path="/app/*" element={<AppShell />} />
+        <Route path="*" element={<AppShell notFound />} />
+      </Routes>
+    </Suspense>
+  );
   return (
     <QueryClientProvider client={queryClient}>
-      <Tooltip.Provider delayDuration={400} skipDelayDuration={200}>
-        <BrowserRouter>
-          <Suspense fallback={<AppFallback />}>
-            <Routes>
-              <Route path="/" element={<LandingPage />} />
-              <Route path="/jobs/:jobId" element={<LegacyJobRedirect />} />
-              <Route path="/app/*" element={<AppShell />} />
-              <Route path="*" element={<AppShell notFound />} />
-            </Routes>
-          </Suspense>
-        </BrowserRouter>
+      {location === undefined ? (
+        <BrowserRouter>{routes}</BrowserRouter>
+      ) : (
+        <StaticRouter location={location}>{routes}</StaticRouter>
+      )}
+      <Suspense fallback={null}>
         <Toaster
           theme={theme}
           position="bottom-center"
@@ -58,7 +64,7 @@ export function App() {
             },
           }}
         />
-      </Tooltip.Provider>
+      </Suspense>
     </QueryClientProvider>
   );
 }

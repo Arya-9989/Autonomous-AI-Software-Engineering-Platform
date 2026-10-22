@@ -40,3 +40,5 @@ deploy/terraform/*.tfvars
 Thumbs.db
 frontend/playwright-report/
 frontend/test-results/
+
+frontend/dist-ssr/
