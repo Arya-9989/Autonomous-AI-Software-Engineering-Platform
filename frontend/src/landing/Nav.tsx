@@ -1,5 +1,5 @@
 import { ChevronDown, Moon, Sun } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 
 import { Logo } from "../components/Logo";
@@ -79,10 +79,51 @@ function useActiveSection(): string {
   return active;
 }
 
+interface Indicator {
+  x: number;
+  width: number;
+  /** False for the first placement and after a resize: those snap, section changes slide. */
+  slide: boolean;
+}
+
+/**
+ * P4: one underline that slides (and stretches) from the old section's link to the new one,
+ * on a spring. Until the script has measured the links (and without JavaScript) each link draws
+ * its own static underline instead, so the active section is always marked.
+ */
+function useIndicator(list: React.RefObject<HTMLUListElement | null>, active: string) {
+  const [indicator, setIndicator] = useState<Indicator | null>(null);
+  const shown = useRef<string | null>(null);
+  useEffect(() => {
+    const element = list.current;
+    if (!element) return;
+    const place = (slide: boolean) => {
+      const link = element.querySelector<HTMLElement>(`a[href="#${active}"]`);
+      if (!link || element.offsetWidth === 0) return;
+      setIndicator({ x: link.offsetLeft, width: link.offsetWidth, slide });
+    };
+    place(shown.current !== null && shown.current !== active);
+    shown.current = active;
+    if (typeof ResizeObserver === "undefined") return;
+    // A resize (fonts, breakpoints) re-measures without sliding; the observer's first call,
+    // made as it starts observing, is not a resize.
+    let first = true;
+    const observer = new ResizeObserver(() => {
+      if (!first) place(false);
+      first = false;
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [list, active]);
+  return indicator;
+}
+
 /** Sticky product nav: name on the left, section links and one pill CTA on the right. */
 export function LocalNav() {
   const active = useActiveSection();
   const [open, setOpen] = useState(false);
+  const list = useRef<HTMLUListElement>(null);
+  const indicator = useIndicator(list, active);
 
   return (
     <div className="sticky top-0 z-30">
@@ -94,7 +135,7 @@ export function LocalNav() {
           <a href="#overview" className="text-[21px] font-semibold tracking-[0.011em] text-ink">
             AutoSWE
           </a>
-          <ul className="ml-auto hidden items-center gap-6 md:flex">
+          <ul ref={list} className="relative ml-auto hidden items-center gap-6 md:flex">
             {SECTIONS.map((section) => (
               <li key={section.id}>
                 <a
@@ -106,16 +147,20 @@ export function LocalNav() {
                   )}
                 >
                   {section.label}
-                  <span
-                    aria-hidden
-                    className={cx(
-                      "absolute inset-x-0 bottom-0 h-px bg-ink transition-opacity duration-300 ease-apple",
-                      active === section.id ? "opacity-100" : "opacity-0",
-                    )}
-                  />
+                  {!indicator && active === section.id && (
+                    <span aria-hidden className="absolute inset-x-0 bottom-0 h-px bg-ink" />
+                  )}
                 </a>
               </li>
             ))}
+            {indicator && (
+              <li
+                aria-hidden
+                data-slide={indicator.slide ? "" : undefined}
+                className="nav-indicator pointer-events-none absolute bottom-0 left-0 h-px w-px origin-left bg-ink"
+                style={{ transform: `translateX(${indicator.x}px) scaleX(${indicator.width})` }}
+              />
+            )}
           </ul>
           <button
             type="button"

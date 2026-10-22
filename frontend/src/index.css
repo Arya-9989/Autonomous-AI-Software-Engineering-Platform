@@ -373,6 +373,52 @@
   inset: -8px -4px;
 }
 
+/*
+ * A spring for state changes, as a CSS easing: damping ratio 0.82 (Motion's bounce 0.18, inside
+ * the UI limit of 0.2), about 1% overshoot. Used where pulling in Motion would cost the first
+ * paint: the pipeline rail's stage changes and the local nav's sliding underline.
+ */
+:root {
+  --ease-spring: linear(
+    0,
+    0.0339,
+    0.1161,
+    0.2235,
+    0.3402,
+    0.4553,
+    0.5621,
+    0.657,
+    0.7385,
+    0.8063,
+    0.8612,
+    0.9046,
+    0.938,
+    0.9629,
+    0.981,
+    0.9936,
+    1.0019,
+    1.007,
+    1.0098,
+    1.011,
+    1.011,
+    1.0103,
+    1.0093,
+    1.008,
+    1.0067,
+    1.0055,
+    1.0043,
+    1.0033,
+    1.0025,
+    1.0018,
+    1.0013,
+    1.0009,
+    1
+  );
+}
+/* The local nav's underline, sliding to the section in view (Nav.tsx). */
+.nav-indicator[data-slide] {
+  transition: transform 460ms var(--ease-spring);
+}
 /* Gradient type for one phrase per page, never body copy. */
 .text-gradient {
   background: linear-gradient(95deg, #ffffff 0%, #d4cfff 40%, #9d90ff 100%);
