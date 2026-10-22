@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: "0.13.5"
           enable-cache: true
@@ -62,7 +62,7 @@ jobs:
       - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: "1.17.0"
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: "0.13.5"
           enable-cache: true
