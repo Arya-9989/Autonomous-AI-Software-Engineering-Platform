@@ -28,20 +28,20 @@ export function Mermaid({ source, label }: { source: string; label: string }) {
           themeVariables:
             theme === "dark"
               ? {
-                  primaryColor: "#1e1b4b",
-                  primaryBorderColor: "#6366f1",
-                  primaryTextColor: "#e0e7ff",
-                  lineColor: "#71717a",
+                  primaryColor: "#1d1d1f",
+                  primaryBorderColor: "#7b6dff",
+                  primaryTextColor: "#f5f5f7",
+                  lineColor: "#8e8e93",
                   fontSize: "13px",
                 }
               : {
-                  primaryColor: "#eef2ff",
-                  primaryBorderColor: "#818cf8",
-                  primaryTextColor: "#1e1b4b",
-                  lineColor: "#a1a1aa",
+                  primaryColor: "#f5f5f7",
+                  primaryBorderColor: "#5b4bff",
+                  primaryTextColor: "#1d1d1f",
+                  lineColor: "#6e6e73",
                   fontSize: "13px",
                 },
-          fontFamily: "Inter Variable, ui-sans-serif, system-ui",
+          fontFamily: "Inter Variable, Inter Fallback, ui-sans-serif, system-ui",
           flowchart: { curve: "basis", padding: 12 },
         });
         svg = (await mermaid.render(`mmd${id}${theme}`, source)).svg;
@@ -58,9 +58,7 @@ export function Mermaid({ source, label }: { source: string; label: string }) {
   if (rendered?.key !== key) return <Skeleton className="h-48" />;
   if (rendered.svg === null) {
     return (
-      <pre className="overflow-x-auto rounded-lg bg-zinc-50 p-4 font-mono text-xs dark:bg-zinc-950">
-        {source}
-      </pre>
+      <pre className="overflow-x-auto rounded-xl bg-surface-2 p-4 font-mono text-xs text-ink">{source}</pre>
     );
   }
   return (

@@ -1,115 +1,435 @@
 @import "tailwindcss";
-@import "@fontsource-variable/inter";
+/* Inter with the optical-size axis: display-style letterforms at large sizes, text-style below. */
+@import "@fontsource-variable/inter/opsz.css";
 @import "@fontsource-variable/jetbrains-mono";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Metric-matched fallback so the swap to Inter does not shift layout. */
+@font-face {
+  font-family: "Inter Fallback";
+  src: local("Arial");
+  size-adjust: 107.12%;
+  ascent-override: 90.44%;
+  descent-override: 22.52%;
+  line-gap-override: 0%;
+}
+
+/*
+ * Design tokens. AutoSWE is dark-first (an engineering studio, like Apple's Pro pages) with one
+ * electric indigo accent, used only for action and state. Light is designed, not inverted.
+ * Contrast (WCAG): ink-2 on every light surface, including accent-soft, >= 4.8:1 light, >= 6.5:1 dark; white on accent-fill
+ * 5.4:1; accent-ink >= 5.9:1 light, >= 5.7:1 dark.
+ */
+:root {
+  --canvas: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f5f5f7;
+  --surface-3: #fafafc;
+  --raised: #ffffff;
+  --ink: #1d1d1f;
+  --ink-2: #636366;
+  --ink-3: #636366;
+  --hairline: rgb(0 0 0 / 0.1);
+  --hairline-strong: rgb(0 0 0 / 0.16);
+  --accent-fill: #5b4bff;
+  --accent-fill-hover: #4b3df0;
+  --accent-ink: #4b3df0;
+  --accent-soft: rgb(91 75 255 / 0.1);
+  --accent-glow: rgb(91 75 255 / 0.28);
+  --ok: #116329;
+  --ok-soft: rgb(17 99 41 / 0.1);
+  --warn: #7d4e00;
+  --warn-soft: rgb(125 78 0 / 0.1);
+  --bad: #b42318;
+  --bad-soft: rgb(180 35 24 / 0.08);
+  --nav-bg: rgb(255 255 255 / 0.8);
+  --code-bg: #ffffff;
+  --shadow-tile: 0 1px 2px rgb(0 0 0 / 0.04), 0 8px 32px rgb(0 0 0 / 0.06);
+  color-scheme: light;
+}
+
+.dark {
+  --canvas: #000000;
+  --surface: #1d1d1f;
+  --surface-2: #161617;
+  --surface-3: #111112;
+  --raised: #2a2a2d;
+  --ink: #f5f5f7;
+  --ink-2: #a1a1a6;
+  --ink-3: #8e8e93;
+  --hairline: rgb(255 255 255 / 0.1);
+  --hairline-strong: rgb(255 255 255 / 0.18);
+  --accent-fill: #5b4bff;
+  --accent-fill-hover: #6b5cff;
+  --accent-ink: #a397ff;
+  --accent-soft: rgb(163 151 255 / 0.14);
+  --accent-glow: rgb(110 96 255 / 0.45);
+  --ok: #3fb950;
+  --ok-soft: rgb(63 185 80 / 0.14);
+  --warn: #d29922;
+  --warn-soft: rgb(210 153 34 / 0.14);
+  --bad: #ff6b63;
+  --bad-soft: rgb(255 107 99 / 0.14);
+  --nav-bg: rgb(22 22 23 / 0.8);
+  --code-bg: #0b0b0c;
+  --shadow-tile: 0 0 0 1px rgb(255 255 255 / 0.06);
+  color-scheme: dark;
+}
+
+/* Sections that are dark in both themes (hero, output): the Pro-page rhythm. */
+.theme-dark {
+  --canvas: #000000;
+  --surface: #1d1d1f;
+  --surface-2: #161617;
+  --surface-3: #111112;
+  --raised: #2a2a2d;
+  --ink: #f5f5f7;
+  --ink-2: #a1a1a6;
+  --ink-3: #8e8e93;
+  --hairline: rgb(255 255 255 / 0.1);
+  --hairline-strong: rgb(255 255 255 / 0.18);
+  --accent-fill-hover: #6b5cff;
+  --accent-ink: #a397ff;
+  --accent-soft: rgb(163 151 255 / 0.14);
+  --accent-glow: rgb(110 96 255 / 0.45);
+  --ok: #3fb950;
+  --ok-soft: rgb(63 185 80 / 0.14);
+  --code-bg: #0b0b0c;
+  --shadow-tile: 0 0 0 1px rgb(255 255 255 / 0.06);
+  color-scheme: dark;
+  color: var(--ink);
+}
+
+@theme inline {
+  --font-sans: "Inter Variable", "Inter Fallback", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-raised: var(--raised);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-hairline: var(--hairline);
+  --color-hairline-strong: var(--hairline-strong);
+  --color-accent: var(--accent-fill);
+  --color-accent-hover: var(--accent-fill-hover);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --color-code: var(--code-bg);
+
+  --ease-apple: cubic-bezier(0.4, 0, 0.6, 1);
+  --ease-out-soft: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --radius-tile: 28px;
+  --radius-hero: 36px;
+}
+
 @theme {
-  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --animate-shimmer: shimmer 1.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  --animate-pulse-soft: pulse-soft 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 
-  --color-brand-50: oklch(0.97 0.02 277);
-  --color-brand-100: oklch(0.94 0.04 277);
-  --color-brand-200: oklch(0.87 0.08 277);
-  --color-brand-300: oklch(0.79 0.12 277);
-  --color-brand-400: oklch(0.68 0.17 277);
-  --color-brand-500: oklch(0.59 0.21 277);
-  --color-brand-600: oklch(0.52 0.22 277);
-  --color-brand-700: oklch(0.45 0.2 277);
-  --color-brand-800: oklch(0.38 0.16 277);
-  --color-brand-900: oklch(0.32 0.12 277);
-  --color-brand-950: oklch(0.22 0.08 277);
-
-  --animate-pulse-ring: pulse-ring 1.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-  --animate-fade-in: fade-in 0.25s ease-out both;
-
-  @keyframes pulse-ring {
-    0% {
-      box-shadow: 0 0 0 0 color-mix(in oklch, var(--color-brand-500) 45%, transparent);
-    }
-    70% {
-      box-shadow: 0 0 0 10px transparent;
-    }
-    100% {
-      box-shadow: 0 0 0 0 transparent;
-    }
-  }
-  @keyframes fade-in {
+  @keyframes shimmer {
     from {
-      opacity: 0;
-      transform: translateY(4px);
+      background-position: 150% 0;
     }
     to {
-      opacity: 1;
-      transform: none;
+      background-position: -50% 0;
     }
+  }
+  @keyframes pulse-soft {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.4;
+    }
+  }
+}
+
+/* Entrance keyframes for overlays (used via animate-[name_...]). */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes slide-in {
+  from {
+    transform: translateX(-100%);
+  }
+}
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+@keyframes palette-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+}
+
+/* --- Type scale (measured from apple.com; see the apple-grade-ui skill) --------------------- */
+@utility t-statement {
+  font-size: 48px;
+  line-height: 52px;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  text-wrap: balance;
+  @media (width >= 768px) {
+    font-size: 64px;
+    line-height: 68px;
+  }
+  @media (width >= 1068px) {
+    font-size: 80px;
+    line-height: 84px;
+    letter-spacing: -0.015em;
+  }
+}
+@utility t-headline {
+  font-size: 40px;
+  line-height: 44px;
+  font-weight: 600;
+  letter-spacing: -0.009em;
+  text-wrap: balance;
+  @media (width >= 1068px) {
+    font-size: 56px;
+    line-height: 60px;
+  }
+}
+@utility t-section {
+  font-size: 32px;
+  line-height: 36px;
+  font-weight: 600;
+  letter-spacing: -0.003em;
+  text-wrap: balance;
+  @media (width >= 768px) {
+    font-size: 40px;
+    line-height: 44px;
+  }
+  @media (width >= 1068px) {
+    font-size: 48px;
+    line-height: 52px;
+  }
+}
+@utility t-tile {
+  font-size: 28px;
+  line-height: 32px;
+  font-weight: 600;
+  letter-spacing: 0.007em;
+  text-wrap: balance;
+  @media (width >= 1068px) {
+    font-size: 40px;
+    line-height: 44px;
+    letter-spacing: 0;
+  }
+}
+@utility t-lead {
+  font-size: 21px;
+  line-height: 25px;
+  font-weight: 600;
+  letter-spacing: 0.011em;
+  text-wrap: balance;
+  @media (width >= 1068px) {
+    font-size: 28px;
+    line-height: 32px;
+    letter-spacing: 0.007em;
+  }
+}
+@utility t-body-lg {
+  font-size: 17px;
+  line-height: 25px;
+  letter-spacing: -0.022em;
+  text-wrap: pretty;
+  @media (width >= 1068px) {
+    font-size: 21px;
+    line-height: 29px;
+    letter-spacing: 0.011em;
+  }
+}
+@utility t-body {
+  font-size: 17px;
+  line-height: 25px;
+  letter-spacing: -0.022em;
+  text-wrap: pretty;
+}
+@utility t-callout {
+  font-size: 14px;
+  line-height: 20px;
+  letter-spacing: -0.016em;
+}
+@utility t-caption {
+  font-size: 12px;
+  line-height: 16px;
+  letter-spacing: -0.01em;
+}
+@utility t-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 16px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Apple's content widths: about 980px for text, 1440px for tiles. */
+@utility wrap {
+  width: 100%;
+  max-width: 1024px;
+  margin-inline: auto;
+  padding-inline: 20px;
+  @media (width >= 768px) {
+    padding-inline: 22px;
+  }
+}
+@utility wrap-wide {
+  width: 100%;
+  max-width: 1440px;
+  margin-inline: auto;
+  padding-inline: 16px;
+  @media (width >= 768px) {
+    padding-inline: 22px;
   }
 }
 
 @layer base {
   html {
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
+    font-optical-sizing: auto;
+    -webkit-text-size-adjust: 100%;
   }
   body {
-    @apply bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100;
-    font-feature-settings: "cv11", "ss01";
+    background: var(--canvas);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 17px;
+    line-height: 1.47;
+    letter-spacing: -0.022em;
   }
   ::selection {
-    @apply bg-brand-500/25;
+    background: var(--accent-soft);
   }
   :focus-visible {
-    @apply outline-2 outline-offset-2 outline-brand-500;
+    outline: 2px solid var(--accent-ink);
+    outline-offset: 2px;
+  }
+  [id] {
+    scroll-margin-top: 64px;
+  }
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
   }
 }
 
-/* Shiki dual-theme output: light colours inline, dark colours in CSS variables. */
+/* Extends a small control's hit area to at least 44px without changing how it looks. */
+.hit-44 {
+  position: relative;
+}
+.hit-44::before {
+  content: "";
+  position: absolute;
+  inset: -8px -4px;
+}
+
+/* Gradient type for one phrase per page, never body copy. */
+.text-gradient {
+  background: linear-gradient(95deg, #ffffff 0%, #d4cfff 40%, #9d90ff 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Scroll reveal: armed only for content still below the fold once the reader starts scrolling,
+   so nothing is ever hidden on load (or in a full-page capture). */
+.reveal-armed {
+  opacity: 0;
+  transform: translateY(20px);
+}
+.reveal-in {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity 700ms var(--ease-out-soft),
+    transform 700ms var(--ease-out-soft);
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--surface-2) 0%,
+    color-mix(in oklab, var(--surface-2), var(--ink) 7%) 50%,
+    var(--surface-2) 100%
+  );
+  background-size: 200% 100%;
+}
+
+/* --- Shiki dual themes: light colours inline, dark in CSS variables ------------------------- */
 .shiki,
 .shiki span {
   background-color: transparent !important;
 }
 .dark .shiki,
-.dark .shiki span {
+.dark .shiki span,
+.theme-dark .shiki,
+.theme-dark .shiki span {
   color: var(--shiki-dark) !important;
 }
 .code-view pre {
   counter-reset: line;
-  padding: 1rem 0;
-  font-size: 0.8125rem;
-  line-height: 1.6;
+  padding: 16px 0;
+  font-size: 13px;
+  line-height: 1.7;
+  letter-spacing: 0;
+  min-width: max-content;
+}
+.code-view code,
+.code-view pre {
+  font-family: var(--font-mono);
 }
 .code-view .line {
   display: inline-block;
   min-width: 100%;
-  padding-right: 1.25rem;
+  padding-right: 20px;
 }
 .code-view .line::before {
   counter-increment: line;
   content: counter(line);
   display: inline-block;
-  width: 3.25rem;
+  width: 3rem;
   padding-right: 1rem;
-  margin-right: 0.5rem;
+  margin-right: 0.25rem;
   text-align: right;
-  color: var(--color-zinc-400);
+  color: var(--ink-3);
   user-select: none;
-}
-.dark .code-view .line::before {
-  color: var(--color-zinc-600);
 }
 
 .mermaid-host svg {
   max-width: 100%;
   height: auto;
 }
-.mermaid-host .node rect {
-  rx: 10px;
-  ry: 10px;
-}
 
 .scrollbar-thin {
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in oklch, var(--color-zinc-500) 35%, transparent) transparent;
+  scrollbar-color: color-mix(in oklab, var(--ink-2) 35%, transparent) transparent;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -117,6 +437,12 @@
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .reveal-armed {
+    opacity: 1;
+    transform: none;
   }
 }

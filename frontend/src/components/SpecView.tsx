@@ -8,10 +8,10 @@ function List({ title, items }: { title: string; items: string[] }) {
   return (
     <Card className="p-5">
       <SectionTitle>{title}</SectionTitle>
-      <ul className="space-y-1.5 text-sm text-zinc-700 dark:text-zinc-300">
+      <ul className="space-y-1.5 text-sm text-ink">
         {items.map((item, index) => (
           <li key={index} className="flex gap-2">
-            <span className="mt-2 size-1 shrink-0 rounded-full bg-brand-500" aria-hidden />
+            <span className="mt-2 size-1 shrink-0 rounded-full bg-accent-ink" aria-hidden />
             <span>{item}</span>
           </li>
         ))}
@@ -30,7 +30,7 @@ export function SpecView({ jobId, spec }: { jobId: string; spec: string }) {
     <div className="space-y-5">
       <Card className="p-5">
         <SectionTitle>Original specification</SectionTitle>
-        <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">{spec}</p>
+        <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink">{spec}</p>
       </Card>
       {requirements.isPending ? (
         <Skeleton className="h-48" />
@@ -43,7 +43,7 @@ export function SpecView({ jobId, spec }: { jobId: string; spec: string }) {
           <List title="Out of scope" items={requirements.data.out_of_scope} />
         </div>
       ) : (
-        <p className="text-sm text-zinc-500">The requirements analyst has not finished yet.</p>
+        <p className="text-sm text-ink-2">The requirements analyst has not finished yet.</p>
       )}
     </div>
   );

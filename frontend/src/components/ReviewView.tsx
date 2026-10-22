@@ -7,15 +7,15 @@ import { Card, EmptyState, ErrorState, SectionTitle, Skeleton } from "./ui";
 import { cx } from "../lib/cx";
 
 const SEVERITY: Record<Severity, { icon: typeof Info; className: string; label: string }> = {
-  error: { icon: AlertCircle, className: "text-red-500", label: "Error" },
-  warning: { icon: AlertTriangle, className: "text-amber-500", label: "Warning" },
-  info: { icon: Info, className: "text-sky-500", label: "Info" },
+  error: { icon: AlertCircle, className: "text-bad", label: "Error" },
+  warning: { icon: AlertTriangle, className: "text-warn", label: "Warning" },
+  info: { icon: Info, className: "text-accent-ink", label: "Info" },
 };
 
 function ScoreRing({ score }: { score: number }) {
   const radius = 34;
   const circumference = 2 * Math.PI * radius;
-  const tone = score >= 85 ? "text-emerald-500" : score >= 60 ? "text-amber-500" : "text-red-500";
+  const tone = score >= 85 ? "text-ok" : score >= 60 ? "text-warn" : "text-bad";
   return (
     <div className="relative size-24 shrink-0" role="img" aria-label={`Review score ${score} out of 100`}>
       <svg viewBox="0 0 80 80" className="size-24 -rotate-90">
@@ -23,7 +23,7 @@ function ScoreRing({ score }: { score: number }) {
           cx="40"
           cy="40"
           r={radius}
-          className="fill-none stroke-zinc-100 dark:stroke-zinc-800"
+          className="fill-none stroke-[var(--hairline-strong)]"
           strokeWidth="7"
         />
         <circle
@@ -70,7 +70,7 @@ export function ReviewView({ jobId, onOpenFile }: { jobId: string; onOpenFile: (
       <Card className="flex flex-col gap-5 p-5 sm:flex-row sm:items-center">
         <ScoreRing score={review.score} />
         <div className="min-w-0 flex-1">
-          <p className="text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">{review.summary}</p>
+          <p className="text-sm leading-relaxed text-ink">{review.summary}</p>
           <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
             {[
               { label: "Files checked", value: review.validation.files_checked },
@@ -78,8 +78,8 @@ export function ReviewView({ jobId, onOpenFile }: { jobId: string; onOpenFile: (
               { label: "Warnings", value: count("warning") },
               { label: "Notes", value: count("info") },
             ].map((stat) => (
-              <div key={stat.label} className="rounded-lg bg-zinc-50 px-3 py-2 dark:bg-zinc-800/50">
-                <p className="text-[11px] text-zinc-500">{stat.label}</p>
+              <div key={stat.label} className="rounded-lg bg-surface-2 px-3 py-2">
+                <p className="text-[11px] text-ink-2">{stat.label}</p>
                 <p className="text-lg font-semibold tabular-nums">{stat.value}</p>
               </div>
             ))}
@@ -90,12 +90,12 @@ export function ReviewView({ jobId, onOpenFile }: { jobId: string; onOpenFile: (
       <Card className="p-5">
         <SectionTitle>Automated validation</SectionTitle>
         {issues.length === 0 ? (
-          <p className="flex items-center gap-2 text-sm text-emerald-700 dark:text-emerald-400">
+          <p className="flex items-center gap-2 text-sm text-ok">
             <CheckCircle2 className="size-4" aria-hidden />
             Every file parsed cleanly; no policy, structure or secret-scan issues.
           </p>
         ) : (
-          <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
+          <ul className="divide-y divide-hairline">
             {issues.map((issue, index) => {
               const { icon: Icon, className } = SEVERITY[issue.severity];
               return (
@@ -103,7 +103,7 @@ export function ReviewView({ jobId, onOpenFile }: { jobId: string; onOpenFile: (
                   <Icon className={cx("mt-0.5 size-4 shrink-0", className)} aria-hidden />
                   <div className="min-w-0">
                     <p>{issue.message}</p>
-                    <p className="font-mono text-[11px] text-zinc-500">
+                    <p className="font-mono text-[11px] text-ink-2">
                       {issue.rule}
                       {issue.file && (
                         <>
@@ -130,27 +130,22 @@ export function ReviewView({ jobId, onOpenFile }: { jobId: string; onOpenFile: (
       <Card className="p-5">
         <SectionTitle>Reviewer findings</SectionTitle>
         {findings.length === 0 ? (
-          <p className="text-sm text-zinc-500">No findings.</p>
+          <p className="text-sm text-ink-2">No findings.</p>
         ) : (
           <ul className="space-y-3">
             {findings.map((finding, index) => {
               const { icon: Icon, className, label } = SEVERITY[finding.severity];
               return (
-                <li
-                  key={index}
-                  className="flex gap-3 rounded-lg border border-zinc-100 p-3 dark:border-zinc-800"
-                >
+                <li key={index} className="flex gap-3 rounded-lg border border-hairline p-3">
                   <Icon className={cx("mt-0.5 size-4 shrink-0", className)} aria-label={label} />
                   <div className="min-w-0 text-sm">
-                    <p className="text-zinc-800 dark:text-zinc-200">{finding.message}</p>
-                    {finding.suggestion && (
-                      <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{finding.suggestion}</p>
-                    )}
+                    <p className="text-ink">{finding.message}</p>
+                    {finding.suggestion && <p className="mt-1 text-xs text-ink-2">{finding.suggestion}</p>}
                     {finding.file && (
                       <button
                         type="button"
                         onClick={() => onOpenFile(finding.file!)}
-                        className="mt-1.5 font-mono text-[11px] text-brand-600 hover:underline dark:text-brand-400"
+                        className="mt-1.5 font-mono text-[11px] text-accent-ink hover:underline"
                       >
                         {finding.file}
                       </button>

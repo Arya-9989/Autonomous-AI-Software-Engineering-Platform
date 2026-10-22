@@ -13,6 +13,8 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
+import { toast } from "sonner";
+
 import { api } from "../lib/api";
 import { ancestors, buildTree, defaultFile, type TreeNode } from "../lib/fileTree";
 import { formatBytes } from "../lib/format";
@@ -31,7 +33,7 @@ const STAGE_LABEL: Record<string, string> = {
 const CODE_LANGUAGES = new Set(["python", "hcl", "docker", "yaml", "toml", "bash"]);
 
 function FileIcon({ file }: { file: FileEntry }) {
-  const className = "size-4 shrink-0 text-zinc-400";
+  const className = "size-4 shrink-0 text-ink-2";
   if (CODE_LANGUAGES.has(file.language)) return <FileCode2 className={className} aria-hidden />;
   if (file.language === "json") return <FileJson className={className} aria-hidden />;
   if (file.language === "markdown") return <FileText className={className} aria-hidden />;
@@ -64,10 +66,8 @@ function TreeItem({
           style={indent}
           aria-current={active ? "true" : undefined}
           className={cx(
-            "flex w-full items-center gap-2 rounded-md py-1 pr-2 text-left text-[13px] transition-colors",
-            active
-              ? "bg-brand-50 font-medium text-brand-700 dark:bg-brand-950/50 dark:text-brand-300"
-              : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800/70",
+            "flex w-full items-center gap-2 rounded-lg py-1.5 pr-2 text-left text-[13px] leading-[18px] transition-colors duration-200 pointer-coarse:py-2.5",
+            active ? "bg-accent-soft font-medium text-accent-ink" : "text-ink hover:bg-ink/[0.05]",
           )}
         >
           <span className="w-3.5 shrink-0" />
@@ -85,16 +85,19 @@ function TreeItem({
         onClick={() => toggle(node.path)}
         style={indent}
         aria-expanded={open}
-        className="flex w-full items-center gap-2 rounded-md py-1 pr-2 text-left text-[13px] text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800/70"
+        className="flex w-full items-center gap-2 rounded-lg py-1.5 pr-2 text-left text-[13px] leading-[18px] text-ink transition-colors duration-200 hover:bg-ink/[0.05] pointer-coarse:py-2.5"
       >
         <ChevronRight
-          className={cx("size-3.5 shrink-0 text-zinc-400 transition-transform", open && "rotate-90")}
+          className={cx(
+            "size-3.5 shrink-0 text-ink-2 transition-transform duration-200 ease-apple",
+            open && "rotate-90",
+          )}
           aria-hidden
         />
         {open ? (
-          <FolderOpen className="size-4 shrink-0 text-brand-500/80" aria-hidden />
+          <FolderOpen className="size-4 shrink-0 text-accent-ink" aria-hidden />
         ) : (
-          <Folder className="size-4 shrink-0 text-brand-500/80" aria-hidden />
+          <Folder className="size-4 shrink-0 text-accent-ink" aria-hidden />
         )}
         <span className="truncate">{node.name}</span>
       </button>
@@ -138,15 +141,20 @@ function CodeView({ jobId, path }: { jobId: string; path: string }) {
 
   const copy = async () => {
     if (!file.data) return;
-    await navigator.clipboard.writeText(file.data.content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    try {
+      await navigator.clipboard.writeText(file.data.content);
+      setCopied(true);
+      toast.success(`Copied ${path}`);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast.error("Copy failed. Select the text and copy it instead.");
+    }
   };
 
   return (
     <div className="flex min-w-0 flex-1 flex-col">
-      <div className="flex min-h-11 flex-wrap items-center gap-2 border-b border-zinc-100 px-4 py-2 dark:border-zinc-800">
-        <span className="min-w-0 truncate font-mono text-xs text-zinc-700 dark:text-zinc-300">{path}</span>
+      <div className="flex min-h-12 flex-wrap items-center gap-2 border-b border-hairline px-4 py-2">
+        <span className="min-w-0 truncate font-mono text-[12px] text-ink">{path}</span>
         {file.data && (
           <>
             <Badge>{formatBytes(file.data.size)}</Badge>
@@ -154,20 +162,29 @@ function CodeView({ jobId, path }: { jobId: string; path: string }) {
             <button
               type="button"
               onClick={copy}
-              className="ml-auto inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+              className="hit-44 ml-auto inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] text-ink-2 transition-colors hover:bg-ink/[0.06] hover:text-ink"
             >
-              {copied ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
+              {copied ? (
+                <Check className="size-3.5 text-ok" aria-hidden />
+              ) : (
+                <Copy className="size-3.5" aria-hidden />
+              )}
               {copied ? "Copied" : "Copy"}
             </button>
           </>
         )}
       </div>
       {file.data?.description && (
-        <p className="border-b border-zinc-100 px-4 py-1.5 text-xs text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+        <p className="border-b border-hairline px-4 py-2 text-[12px] leading-4 text-ink-2">
           {file.data.description}
         </p>
       )}
-      <div className="code-view scrollbar-thin max-h-[32rem] min-h-0 flex-1 overflow-auto md:max-h-none bg-zinc-50/60 font-mono dark:bg-zinc-950/40">
+      <div
+        className="code-view scrollbar-thin max-h-[32rem] min-h-0 flex-1 overflow-auto bg-code md:max-h-none"
+        tabIndex={0}
+        role="region"
+        aria-label={`Contents of ${path}`}
+      >
         {file.isError ? (
           <div className="p-4">
             <ErrorState error={file.error} onRetry={() => void file.refetch()} />
@@ -181,7 +198,7 @@ function CodeView({ jobId, path }: { jobId: string; path: string }) {
         ) : html ? (
           <div dangerouslySetInnerHTML={{ __html: html }} />
         ) : (
-          <pre className="px-5 text-zinc-700 dark:text-zinc-300">{file.data.content}</pre>
+          <pre className="px-5 text-ink">{file.data.content}</pre>
         )}
       </div>
     </div>
@@ -224,21 +241,41 @@ export function FileExplorer({
     });
 
   if (files.isError) return <ErrorState error={files.error} onRetry={() => void files.refetch()} />;
-  if (files.isPending) return <Skeleton className="h-96" />;
+  if (files.isPending) {
+    return (
+      <div
+        className="flex h-[38rem] overflow-hidden rounded-[18px] bg-surface shadow-[var(--shadow-tile)]"
+        aria-busy="true"
+        aria-label="Loading files"
+      >
+        <div className="hidden w-64 space-y-2.5 border-r border-hairline p-4 md:block">
+          {Array.from({ length: 12 }, (_, i) => (
+            <Skeleton key={i} className="h-3.5" />
+          ))}
+        </div>
+        <div className="flex-1 space-y-2.5 p-5">
+          {Array.from({ length: 16 }, (_, i) => (
+            <Skeleton key={i} className="h-3.5" />
+          ))}
+        </div>
+      </div>
+    );
+  }
   if (files.data.length === 0) {
     return (
-      <EmptyState icon={<FolderTree className="size-6" />} title={running ? "No files yet" : "No files"}>
+      <EmptyState icon={<FolderTree />} title={running ? "No files yet" : "No files"}>
         {running ? "Files appear here as soon as each agent finishes." : "This job produced no files."}
       </EmptyState>
     );
   }
 
   return (
-    <div className="flex flex-col overflow-hidden rounded-xl border border-zinc-200/80 bg-white md:h-[38rem] md:flex-row dark:border-zinc-800 dark:bg-zinc-900/60">
-      <div className="scrollbar-thin max-h-64 shrink-0 overflow-y-auto border-b border-zinc-100 p-2 md:max-h-none md:w-64 md:border-r md:border-b-0 dark:border-zinc-800">
-        <p className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-          {files.data.length} files
-        </p>
+    <div className="flex flex-col overflow-hidden rounded-[18px] bg-surface shadow-[var(--shadow-tile)] md:h-[38rem] md:flex-row">
+      <nav
+        aria-label="Generated files"
+        className="scrollbar-thin max-h-64 shrink-0 overflow-y-auto border-b border-hairline p-2 md:max-h-none md:w-64 md:border-r md:border-b-0"
+      >
+        <p className="t-eyebrow px-2 pt-2 pb-2 text-ink-2">{files.data.length} files</p>
         <ul>
           {tree.children.map((node) => (
             <TreeItem
@@ -252,7 +289,7 @@ export function FileExplorer({
             />
           ))}
         </ul>
-      </div>
+      </nav>
       {active ? <CodeView jobId={jobId} path={active} /> : null}
     </div>
   );
