@@ -1,0 +1,45 @@
+# Local stack: the platform (API + UI + worker) backed by PostgreSQL.
+#   docker compose up --build        -> http://localhost:8000
+# Values here are for local use only; production config lives in deploy/.
+name: autoswe
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: autoswe
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-autoswe-local}
+      POSTGRES_DB: autoswe
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autoswe -d autoswe"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build: .
+    image: autoswe:local
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${AUTOSWE_PORT:-8000}:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://autoswe:${POSTGRES_PASSWORD:-autoswe-local}@db:5432/autoswe
+      LOG_FORMAT: json
+      WORKER_CONCURRENCY: "2"
+      # Local demo defaults: no auth, offline provider unless a key is supplied.
+      AUTH_DISABLED: ${AUTH_DISABLED:-true}
+      API_KEYS: ${API_KEYS:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+volumes:
+  pgdata:
