@@ -1,0 +1,141 @@
+"""Queue semantics: atomic claims, cancellation, failure handling, crash recovery."""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import timedelta
+from typing import Any
+
+from sqlalchemy import update
+
+from autoswe.llm.base import LLMRefusalError, LLMRequest
+from autoswe.models import Job, JobStatus, utcnow
+from autoswe.repository import JobRepository
+from tests.conftest import ALICE, HarnessFactory
+from tests.fakes import ScriptedProvider, registry_with
+from tests.test_events import parse_sse
+
+
+async def test_claim_is_atomic_across_workers(harness_factory: HarnessFactory) -> None:
+    harness = await harness_factory(worker_enabled=False)
+    job_id = (await harness.submit())["id"]
+    db = harness.app.state.services.db
+
+    async def claim(worker: str) -> str | None:
+        async with db.session() as session:
+            return await JobRepository(session).claim_next(worker)
+
+    results = await asyncio.gather(*(claim(f"w{i}") for i in range(8)))
+    assert [r for r in results if r is not None] == [job_id]
+
+
+async def test_jobs_are_claimed_oldest_first(harness_factory: HarnessFactory) -> None:
+    harness = await harness_factory(worker_enabled=False, max_active_jobs_per_owner=5)
+    first = (await harness.submit())["id"]
+    await harness.submit()
+    async with harness.app.state.services.db.session() as session:
+        assert await JobRepository(session).claim_next("w") == first
+
+
+async def test_running_job_can_be_cancelled(harness_factory: HarnessFactory) -> None:
+    provider = ScriptedProvider()
+    entered, _gate = provider.pause("architect")  # never released: cancel must interrupt it
+    harness = await harness_factory(registry=registry_with(provider))
+    job_id = (await harness.submit())["id"]
+    await asyncio.wait_for(entered.wait(), 5)
+
+    response = await harness.client.post(f"/api/v1/jobs/{job_id}/cancel", headers=ALICE)
+    assert response.status_code == 200
+    job = await harness.wait_for(job_id, {"cancelled"})
+    statuses = {s["name"]: s["status"] for s in job["stages"]}
+    assert statuses["analyze"] == "succeeded"
+    assert statuses["architect"] == "skipped"
+    events = parse_sse(
+        (await harness.client.get(f"/api/v1/jobs/{job_id}/events", headers=ALICE)).text
+    )
+    assert "job.cancel_requested" in [e["event"] for e in events]
+    assert events[-2]["event"] == "job.cancelled"
+
+
+async def test_llm_failure_fails_the_job_with_a_useful_message(
+    harness_factory: HarnessFactory,
+) -> None:
+    def refuse(request: LLMRequest[Any]) -> Any:
+        raise LLMRefusalError("Model declined the coder task (category=None)")
+
+    provider = ScriptedProvider({"coder": refuse})
+    harness = await harness_factory(registry=registry_with(provider))
+    job = await harness.wait_for((await harness.submit())["id"], {"failed"})
+    assert job["error"] == "Code generator: Model declined the coder task (category=None)"
+    statuses = [s["status"] for s in job["stages"]]
+    assert statuses == ["succeeded", "succeeded", "failed", "skipped", "skipped"]
+
+
+async def test_unexpected_agent_crash_is_contained(harness_factory: HarnessFactory) -> None:
+    def explode(request: LLMRequest[Any]) -> Any:
+        raise KeyError("boom")
+
+    provider = ScriptedProvider({"devops": explode})
+    harness = await harness_factory(registry=registry_with(provider))
+    job = await harness.wait_for((await harness.submit())["id"], {"failed"})
+    assert job["error"] == "DevOps engineer crashed (KeyError)"
+    # The worker survives and keeps processing new jobs.
+    provider.overrides.clear()
+    follow_up = await harness.wait_for((await harness.submit())["id"], {"succeeded"})
+    assert follow_up["status"] == "succeeded"
+
+
+async def test_shutdown_requeues_in_flight_jobs(harness_factory: HarnessFactory) -> None:
+    provider = ScriptedProvider()
+    entered, _gate = provider.pause("coder")
+    harness = await harness_factory(registry=registry_with(provider))
+    job_id = (await harness.submit())["id"]
+    await asyncio.wait_for(entered.wait(), 5)
+
+    await harness.worker.stop()  # simulates SIGTERM during a rolling deploy
+
+    job = (await harness.client.get(f"/api/v1/jobs/{job_id}", headers=ALICE)).json()
+    assert job["status"] == "queued"
+    assert {s["status"] for s in job["stages"]} == {"pending"}
+    files = (await harness.client.get(f"/api/v1/jobs/{job_id}/files", headers=ALICE)).json()
+    assert files == []
+
+
+async def test_stale_running_jobs_are_reaped(harness_factory: HarnessFactory) -> None:
+    harness = await harness_factory(worker_enabled=False)
+    job_id = (await harness.submit())["id"]
+    db = harness.app.state.services.db
+    async with db.session() as session:
+        repo = JobRepository(session)
+        assert await repo.claim_next("dead-worker") == job_id
+        await session.execute(
+            update(Job).where(Job.id == job_id).values(heartbeat_at=utcnow() - timedelta(hours=1))
+        )
+        await session.commit()
+        assert await repo.fail_stale(timedelta(minutes=5)) == [job_id]
+        assert await repo.fail_stale(timedelta(minutes=5)) == []
+        assert await repo.status_of(job_id) is JobStatus.FAILED
+
+    job = (await harness.client.get(f"/api/v1/jobs/{job_id}", headers=ALICE)).json()
+    assert job["error"] == "Worker heartbeat lost; job abandoned."
+
+
+async def test_two_replicas_share_one_queue(harness_factory: HarnessFactory) -> None:
+    """Two app instances on the same database: every job runs exactly once."""
+    first = await harness_factory(max_active_jobs_per_owner=10)
+    second = await harness_factory(max_active_jobs_per_owner=10)
+    ids = [(await first.submit())["id"] for _ in range(4)]
+    for job_id in ids:
+        await first.wait_for(job_id, {"succeeded"})
+
+    async with first.app.state.services.db.session() as session:
+        workers = {
+            (await JobRepository(session).get(job_id)).worker_id  # type: ignore[union-attr]
+            for job_id in ids
+        }
+    assert workers <= {first.worker.id, second.worker.id}
+    for job_id in ids:
+        events = parse_sse(
+            (await second.client.get(f"/api/v1/jobs/{job_id}/events", headers=ALICE)).text
+        )
+        assert [e["event"] for e in events].count("job.started") == 1
