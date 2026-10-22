@@ -95,7 +95,7 @@ export function PipelineRail({
                   className={cx(
                     "text-[12px] leading-4 font-medium tracking-[-0.01em] transition-colors duration-300 md:text-[14px] md:leading-5",
                     dim ? "text-ink-2" : "text-ink",
-                    labels === "full" ? "max-md:hidden" : "",
+                    labels === "full" ? "max-xl:hidden" : "",
                   )}
                 >
                   {labels === "full" ? agent.label : agent.short}
@@ -103,7 +103,7 @@ export function PipelineRail({
                 {labels === "full" && (
                   <span
                     className={cx(
-                      "text-[12px] leading-4 font-medium md:hidden",
+                      "text-[12px] leading-4 font-medium xl:hidden",
                       dim ? "text-ink-2" : "text-ink",
                     )}
                   >
