@@ -76,7 +76,7 @@ export function ReviewView({ jobId, onOpenFile }: { jobId: string; onOpenFile: (
               { label: "Files checked", value: review.validation.files_checked },
               { label: "Errors", value: count("error") },
               { label: "Warnings", value: count("warning") },
-              { label: "Notes", value: count("info") },
+              { label: "Info notes", value: count("info") },
             ].map((stat) => (
               <div key={stat.label} className="rounded-lg bg-surface-2 px-3 py-2">
                 <p className="text-[11px] text-ink-2">{stat.label}</p>

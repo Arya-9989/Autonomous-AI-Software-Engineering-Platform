@@ -141,7 +141,7 @@ export function Story() {
                   key={index}
                   aria-hidden={active !== index}
                   className={cx(
-                    "absolute inset-0 flex flex-col justify-center overflow-hidden transition-[opacity,transform] duration-500 ease-apple",
+                    "absolute inset-0 flex flex-col overflow-hidden transition-[opacity,transform] duration-500 ease-apple [justify-content:safe_center]",
                     active === index ? "opacity-100" : "pointer-events-none translate-y-2 opacity-0",
                   )}
                 >

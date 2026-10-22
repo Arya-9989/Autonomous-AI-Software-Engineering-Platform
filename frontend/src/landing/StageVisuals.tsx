@@ -102,7 +102,7 @@ function TreeRows({ node, depth }: { node: TreeNode; depth: number }) {
     <>
       {node.children.map((child) => (
         <li key={child.path}>
-          <div className="flex items-center gap-2 py-[3px]" style={{ paddingLeft: depth * 16 }}>
+          <div className="flex items-center gap-2 py-px" style={{ paddingLeft: depth * 16 }}>
             {child.file ? (
               <File className="size-3.5 shrink-0 text-ink-2" aria-hidden />
             ) : (

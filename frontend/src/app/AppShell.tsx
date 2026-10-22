@@ -160,10 +160,12 @@ export default function AppShell({ notFound = false }: { notFound?: boolean }) {
                   <div className="flex h-12 items-center justify-between border-b border-hairline px-3">
                     <Dialog.Title className="sr-only">Jobs</Dialog.Title>
                     <Logo to="/" className="px-1" />
-                    <Dialog.Close asChild>
-                      <IconButton label="Close jobs">
-                        <X className="size-5" />
-                      </IconButton>
+                    {/* No tooltip here: the dialog focuses this button on open. */}
+                    <Dialog.Close
+                      aria-label="Close jobs"
+                      className="inline-grid size-11 place-items-center rounded-full text-ink-2 hover:bg-ink/[0.07] hover:text-ink"
+                    >
+                      <X className="size-5" aria-hidden />
                     </Dialog.Close>
                   </div>
                   <div className="h-[calc(100%-3rem)]">

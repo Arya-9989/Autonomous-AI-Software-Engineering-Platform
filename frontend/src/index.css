@@ -425,6 +425,10 @@
   max-width: 100%;
   height: auto;
 }
+.mermaid-host .node rect {
+  rx: 12px;
+  ry: 12px;
+}
 
 .scrollbar-thin {
   scrollbar-width: thin;
