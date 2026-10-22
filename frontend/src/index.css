@@ -1,0 +1,122 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-brand-50: oklch(0.97 0.02 277);
+  --color-brand-100: oklch(0.94 0.04 277);
+  --color-brand-200: oklch(0.87 0.08 277);
+  --color-brand-300: oklch(0.79 0.12 277);
+  --color-brand-400: oklch(0.68 0.17 277);
+  --color-brand-500: oklch(0.59 0.21 277);
+  --color-brand-600: oklch(0.52 0.22 277);
+  --color-brand-700: oklch(0.45 0.2 277);
+  --color-brand-800: oklch(0.38 0.16 277);
+  --color-brand-900: oklch(0.32 0.12 277);
+  --color-brand-950: oklch(0.22 0.08 277);
+
+  --animate-pulse-ring: pulse-ring 1.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  --animate-fade-in: fade-in 0.25s ease-out both;
+
+  @keyframes pulse-ring {
+    0% {
+      box-shadow: 0 0 0 0 color-mix(in oklch, var(--color-brand-500) 45%, transparent);
+    }
+    70% {
+      box-shadow: 0 0 0 10px transparent;
+    }
+    100% {
+      box-shadow: 0 0 0 0 transparent;
+    }
+  }
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100;
+    font-feature-settings: "cv11", "ss01";
+  }
+  ::selection {
+    @apply bg-brand-500/25;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-brand-500;
+  }
+}
+
+/* Shiki dual-theme output: light colours inline, dark colours in CSS variables. */
+.shiki,
+.shiki span {
+  background-color: transparent !important;
+}
+.dark .shiki,
+.dark .shiki span {
+  color: var(--shiki-dark) !important;
+}
+.code-view pre {
+  counter-reset: line;
+  padding: 1rem 0;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+.code-view .line {
+  display: inline-block;
+  min-width: 100%;
+  padding-right: 1.25rem;
+}
+.code-view .line::before {
+  counter-increment: line;
+  content: counter(line);
+  display: inline-block;
+  width: 3.25rem;
+  padding-right: 1rem;
+  margin-right: 0.5rem;
+  text-align: right;
+  color: var(--color-zinc-400);
+  user-select: none;
+}
+.dark .code-view .line::before {
+  color: var(--color-zinc-600);
+}
+
+.mermaid-host svg {
+  max-width: 100%;
+  height: auto;
+}
+.mermaid-host .node rect {
+  rx: 10px;
+  ry: 10px;
+}
+
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--color-zinc-500) 35%, transparent) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
