@@ -3,6 +3,30 @@
 @import "@fontsource-variable/inter/opsz.css";
 @import "@fontsource-variable/jetbrains-mono";
 
+/*
+ * The same faces cut down to the characters the interface uses (scripts/subset-fonts.sh): 40 KB
+ * and 31 KB instead of 73 KB and 40 KB. Declared after the full faces, so they win where the
+ * ranges overlap; the full Latin files load only for text outside this range.
+ */
+@font-face {
+  font-family: "Inter Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("./fonts/inter-ui-opsz.woff2") format("woff2-variations");
+  unicode-range:
+    U+0020-007E, U+00A0, U+00A9, U+00B7, U+2013-2014, U+2018-2019, U+201C-201D, U+2026, U+203A, U+2318, U+2713;
+}
+@font-face {
+  font-family: "JetBrains Mono Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url("./fonts/jetbrains-mono-ui.woff2") format("woff2-variations");
+  unicode-range:
+    U+0020-007E, U+00A0, U+00A9, U+00B7, U+2013-2014, U+2018-2019, U+201C-201D, U+2026, U+203A, U+2318, U+2713;
+}
+
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* Metric-matched fallback so the swap to Inter does not shift layout. */
