@@ -1,7 +1,52 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import sample from "../src/landing/sample.json" with { type: "json" };
 import { expectNoHorizontalOverflow, expectNoSeriousA11yViolations } from "./a11y";
+
+const STAGE_TITLES = [
+  "Reads the spec. Names the things.",
+  "Designs before it writes.",
+  "Writes the service. And its tests.",
+  "Ready to ship, not just to run.",
+  "Checks everything. Repairs what fails.",
+];
+// The Validation section lists 20 checks (src/landing/checks.ts); the count-up must land on it.
+const CHECKS = 20;
+
+/** Scrolls so the pinned story is `progress` (0..1) of the way through, and lets it render. */
+async function scrollStory(page: Page, progress: number): Promise<void> {
+  await page.evaluate((p) => {
+    const track = document.querySelector<HTMLElement>(".story-track")!;
+    const top = track.getBoundingClientRect().top + window.scrollY - 52;
+    window.scrollTo(0, top + p * (track.offsetHeight - (window.innerHeight - 52)));
+  }, progress);
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+  );
+}
+
+/** Rendered opacity of a tree row in the pinned story, including its ancestors'. */
+function rowOpacity(page: Page, name: string): Promise<number> {
+  return page.evaluate((file) => {
+    const rows = [...document.querySelectorAll<HTMLElement>(".story-pinned li.sx-tree")];
+    const row = rows.find((li) => li.textContent?.trim() === file);
+    let element: HTMLElement | null = row?.querySelector<HTMLElement>(".sx-in") ?? null;
+    let opacity = 1;
+    while (element) {
+      opacity *= Number(getComputedStyle(element).opacity);
+      element = element.parentElement;
+    }
+    return opacity;
+  }, name);
+}
+
+/** The Validation section's stat for `label` ("Files checked", "Checks"). */
+function stat(page: Page, label: string) {
+  return page
+    .getByTestId("validation-stats")
+    .locator("div", { has: page.getByText(label, { exact: true }) })
+    .locator("dd");
+}
 
 test.describe("landing page", () => {
   for (const colorScheme of ["light", "dark"] as const) {
@@ -50,11 +95,81 @@ test.describe("landing page", () => {
     await expect(page.getByRole("button", { name: "Play highlights" })).toBeVisible();
   });
 
-  test("local nav marks the section in view", async ({ page }) => {
+  test("local nav marks the section in view, and its underline slides there", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/");
     const nav = page.getByRole("navigation", { name: "AutoSWE sections" });
-    await nav.getByRole("link", { name: "Output" }).click();
-    await expect(nav.getByRole("link", { name: "Output" })).toHaveAttribute("aria-current", "true");
+    const output = nav.getByRole("link", { name: "Output" });
+    const indicator = nav.locator(".nav-indicator");
+    await expect(indicator).toBeAttached();
+    await output.click();
+    await expect(output).toHaveAttribute("aria-current", "true");
+    await expect(indicator).toHaveAttribute("data-slide", "");
+    // One underline, moved by transform (not layout), ends exactly under the active link.
+    await expect
+      .poll(async () => {
+        const [line, link] = await Promise.all([indicator.boundingBox(), output.boundingBox()]);
+        return line && link ? Math.abs(line.x - link.x) + Math.abs(line.width - link.width) : 99;
+      })
+      .toBeLessThanOrEqual(1);
+  });
+
+  test("the pinned story is scrubbed by scroll and plays backwards", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/");
+    await expect(page.locator(".story-pinned")).toBeVisible();
+    await expect(page.locator(".story-static")).toHaveCount(0);
+
+    // During the analyst's band no files exist yet.
+    await scrollStory(page, 0.12);
+    expect(await rowOpacity(page, "models.py")).toBeLessThan(0.05);
+    expect(await rowOpacity(page, "Dockerfile")).toBeLessThan(0.05);
+    // Near the end of the coder's band its files are in; the DevOps engineer's are not yet.
+    await scrollStory(page, 0.56);
+    expect(await rowOpacity(page, "models.py")).toBeGreaterThan(0.95);
+    expect(await rowOpacity(page, "Dockerfile")).toBeLessThan(0.05);
+    // Finished: the whole tree.
+    await scrollStory(page, 0.98);
+    expect(await rowOpacity(page, "Dockerfile")).toBeGreaterThan(0.95);
+    // And back up: scrubbed, not triggered, so it reverses.
+    await scrollStory(page, 0.12);
+    expect(await rowOpacity(page, "models.py")).toBeLessThan(0.05);
+  });
+
+  test("with reduced motion the story is static, complete and nothing is faded", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/");
+    const story = page.locator("#how-it-works");
+    await expect(page.locator(".story-pinned")).toHaveCount(0);
+    for (const title of STAGE_TITLES) await expect(story.getByRole("heading", { name: title })).toBeVisible();
+    for (const stage of sample.stages) await expect(story.getByText(stage.summary)).toBeVisible();
+    await expect(story.getByRole("region", { name: /app\/models\.py/ })).toContainText("class Loan(Base)");
+    const faded = await story.evaluate((root) =>
+      [...root.querySelectorAll<HTMLElement>("h3, p, li, pre")]
+        .filter((el) => el.offsetHeight > 0 && Number(getComputedStyle(el).opacity) < 0.1)
+        .map((el) => el.textContent?.slice(0, 40)),
+    );
+    expect(faded).toEqual([]);
+  });
+
+  test("validation numbers count up once and land on the exact values", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/");
+    const files = stat(page, "Files checked");
+    // Below the fold on load: armed at zero, waiting to count.
+    await expect(files).toHaveText("0");
+    await page.getByTestId("validation-stats").scrollIntoViewIfNeeded();
+    await expect(files).toHaveText(String(sample.validation.files_checked));
+    await expect(stat(page, "Checks")).toHaveText(String(CHECKS));
+    await expect(page.getByTestId("validation-stats").locator("[data-counting]")).toHaveCount(0);
+  });
+
+  test("with reduced motion the numbers are final at once", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto("/");
+    await expect(stat(page, "Files checked")).toHaveText(String(sample.validation.files_checked));
+    await expect(stat(page, "Checks")).toHaveText(String(CHECKS));
   });
 
   test("output viewer shows the generated files byte for byte", async ({ page }) => {
@@ -91,6 +206,20 @@ test.describe("landing page without JavaScript", () => {
       /Plain English in\.\s*Deployable project out\./,
     );
     await expect(page.getByText(sample.spec, { exact: false }).first()).toBeVisible();
+  });
+
+  test("the whole story and the final numbers are there without JavaScript", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/");
+    const story = page.locator("#how-it-works");
+    for (const title of STAGE_TITLES) await expect(story.getByRole("heading", { name: title })).toBeVisible();
+    for (const stage of sample.stages) await expect(story.getByText(stage.summary)).toBeVisible();
+    await expect(story.getByRole("region", { name: /^Dockerfile/ })).toContainText("HEALTHCHECK");
+    await expect(stat(page, "Files checked")).toHaveText(String(sample.validation.files_checked));
+    await expect(stat(page, "Checks")).toHaveText(String(CHECKS));
+    // The section in view is marked even though no script measured the links.
+    const nav = page.getByRole("navigation", { name: "AutoSWE sections" });
+    await expect(nav.getByRole("link", { name: "Overview" }).locator("span")).toHaveCount(1);
   });
 });
 
