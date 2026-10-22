@@ -110,18 +110,11 @@ class AnthropicProvider:
         except anthropic.RateLimitError as exc:
             raise LLMTransientError("Rate limited by the Anthropic API") from exc
         except anthropic.APIStatusError as exc:
-            if exc.status_code >= 500:
-                raise LLMTransientError(f"Anthropic API error {exc.status_code}") from exc
-            raise LLMConfigurationError(f"Anthropic API error {exc.status_code}") from exc
+            raise _status_error(exc) from exc
         except anthropic.APIConnectionError as exc:  # includes timeouts
             raise LLMTransientError("Could not reach the Anthropic API") from exc
 
-        usage = TokenUsage(
-            input_tokens=(message.usage.input_tokens or 0)
-            + (getattr(message.usage, "cache_read_input_tokens", 0) or 0)
-            + (getattr(message.usage, "cache_creation_input_tokens", 0) or 0),
-            output_tokens=message.usage.output_tokens or 0,
-        )
+        usage = _usage(message.usage)
         logger.info(
             "llm call finished",
             extra={
@@ -143,6 +136,10 @@ class AnthropicProvider:
                 f"{request.agent} output hit max_tokens={self._max_tokens}; raise "
                 "ANTHROPIC_MAX_TOKENS or simplify the spec"
             )
+        if message.stop_reason == "model_context_window_exceeded":
+            raise LLMOutputError(
+                f"{request.agent} ran out of the model's context window; simplify the spec"
+            )
 
         text = "".join(block.text for block in message.content if block.type == "text")
         try:
@@ -153,3 +150,44 @@ class AnthropicProvider:
                 f"{exc.error_count()} validation error(s)"
             ) from exc
         return LLMResponse(output=output, model=message.model, usage=usage)
+
+
+# Error types (``error.type`` in an API error body) that are worth resubmitting later.
+_TRANSIENT_ERROR_TYPES = frozenset(
+    {"overloaded_error", "api_error", "rate_limit_error", "timeout_error"}
+)
+
+
+def _status_error(exc: anthropic.APIStatusError) -> LLMTransientError | LLMConfigurationError:
+    """Map an API error the specific handlers did not catch.
+
+    An ``error`` event in the middle of a stream reaches us as an ``APIStatusError`` carrying
+    the stream's own HTTP status (200), so the error type in the body decides, then the status.
+    """
+    body = exc.body if isinstance(exc.body, dict) else {}
+    error = body.get("error") if isinstance(body.get("error"), dict) else body
+    error_type = error.get("type") if isinstance(error, dict) else None
+    if error_type in _TRANSIENT_ERROR_TYPES or exc.status_code >= 500:
+        label = error_type or f"HTTP {exc.status_code}"
+        return LLMTransientError(f"Anthropic API error ({label}); resubmit the job later")
+    label = error_type or f"HTTP {exc.status_code}"
+    return LLMConfigurationError(f"Anthropic API error ({label})")
+
+
+def _usage(usage: Any) -> TokenUsage:
+    """Billed tokens for the call; total input = uncached + cache writes + cache reads.
+
+    After a server-side fallback the top-level usage only covers the attempt that produced the
+    message, while ``usage.iterations`` lists every attempt (the declined one is billed too), so
+    the iterations are summed when present.
+    """
+    entries = getattr(usage, "iterations", None) or [usage]
+    input_tokens = output_tokens = 0
+    for entry in entries:
+        input_tokens += (
+            (getattr(entry, "input_tokens", 0) or 0)
+            + (getattr(entry, "cache_read_input_tokens", 0) or 0)
+            + (getattr(entry, "cache_creation_input_tokens", 0) or 0)
+        )
+        output_tokens += getattr(entry, "output_tokens", 0) or 0
+    return TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens)
