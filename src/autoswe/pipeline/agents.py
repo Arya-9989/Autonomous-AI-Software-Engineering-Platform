@@ -25,16 +25,24 @@ from autoswe.pipeline.artifacts import (
     ValidationReport,
 )
 from autoswe.pipeline.docs import architecture_markdown
-from autoswe.pipeline.validation import Limits, sanitize_files, validate_project
+from autoswe.pipeline.validation import Limits, path_key, sanitize_files, validate_project
 
 Emit = Callable[[str], Awaitable[None]]
 
 PLATFORM_OWNED = frozenset({"ARCHITECTURE.md", "docs/architecture.json", "docs/requirements.json"})
 DEVOPS_PREFIXES = ("Dockerfile", ".dockerignore", ".github/", "deploy/")
+# Ownership is decided case-insensitively: "architecture.md" from the code generator would
+# otherwise replace the platform's ARCHITECTURE.md once the zip is extracted on macOS or Windows.
+_PLATFORM_KEYS = frozenset(path_key(path) for path in PLATFORM_OWNED)
+_DEVOPS_KEYS = tuple(path_key(prefix) for prefix in DEVOPS_PREFIXES)
 
 
 def is_devops_path(path: str) -> bool:
-    return path.startswith(DEVOPS_PREFIXES)
+    return path_key(path).startswith(_DEVOPS_KEYS)
+
+
+def is_platform_owned(path: str) -> bool:
+    return path_key(path) in _PLATFORM_KEYS
 
 
 @dataclass
@@ -68,7 +76,7 @@ class PipelineState:
         self.rejected.extend(issues)
         accepted, dropped = [], []
         for file in clean:
-            if file.path in PLATFORM_OWNED and stage is not StageName.ARCHITECT:
+            if is_platform_owned(file.path) and stage is not StageName.ARCHITECT:
                 dropped.append(file.path)
             elif keep(file.path):
                 self.files[file.path] = file

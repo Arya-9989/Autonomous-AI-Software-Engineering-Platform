@@ -12,6 +12,7 @@ import io
 import json
 import re
 import tomllib
+import unicodedata
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -34,8 +35,17 @@ _SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("anthropic-key", re.compile(r"\bsk-ant-[A-Za-z0-9_-]{20,}")),
     ("github-token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b")),
 )
-_WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:")
-_FORBIDDEN_SEGMENTS = frozenset({"", ".", "..", ".git"})
+# Characters Windows cannot store in a file name (":" also covers drive letters and NTFS
+# alternate data streams), plus ASCII control characters.
+_INVALID_CHARS = re.compile(r'[<>:"|?*\x00-\x1f\x7f]')
+# Device names Windows reserves in every directory, with or without an extension ("nul.txt").
+_WINDOWS_RESERVED = frozenset(
+    {"con", "prn", "aux", "nul"}
+    | {f"com{i}" for i in range(1, 10)}
+    | {f"lpt{i}" for i in range(1, 10)}
+)
+# ".git" as a case-insensitive file system or a Windows 8.3 short name sees it.
+_GIT_DIR_NAMES = frozenset({".git", "git~1"})
 MAX_PATH_DEPTH = 8
 
 
@@ -63,17 +73,41 @@ class _Collector:
         )
 
 
+def _unsafe_segment(part: str) -> bool:
+    if part in {"", ".", ".."}:
+        return True
+    # Windows drops trailing dots and spaces, so ".. " is ".." and ".git." is ".git" there.
+    if part != part.rstrip(". "):
+        return True
+    folded = part.casefold()
+    return folded in _GIT_DIR_NAMES or folded.split(".", 1)[0] in _WINDOWS_RESERVED
+
+
 def normalize_path(raw: str) -> str | None:
-    """Return a safe, normalised POSIX relative path, or ``None`` if the path is unsafe."""
+    """Return a safe, normalised POSIX relative path, or ``None`` if the path is unsafe.
+
+    Archives are extracted on Linux, macOS and Windows alike, so a path is rejected if it is
+    unsafe on any of them: absolute paths, ``..`` and empty segments, ``.git`` in any letter
+    case (``.GIT/hooks`` is ``.git/hooks`` on a case-insensitive file system), Unicode format
+    characters (HFS+ ignores some, so ``.g<ZWNJ>it`` is ``.git``), names Windows rewrites or
+    reserves (trailing dots and spaces, ``CON``, ``nul.txt``) and characters it cannot store.
+    """
     candidate = raw.strip()
-    if not candidate or "\\" in candidate or "\x00" in candidate:
+    if not candidate or "\\" in candidate or candidate.startswith("/"):
         return None
-    if candidate.startswith("/") or _WINDOWS_DRIVE.match(candidate):
+    if _INVALID_CHARS.search(candidate):
+        return None
+    if any(unicodedata.category(char) == "Cf" for char in candidate):
         return None
     parts = candidate.split("/")
-    if any(part in _FORBIDDEN_SEGMENTS for part in parts) or len(parts) > MAX_PATH_DEPTH:
+    if len(parts) > MAX_PATH_DEPTH or any(_unsafe_segment(part) for part in parts):
         return None
     return str(PurePosixPath(*parts))
+
+
+def path_key(path: str) -> str:
+    """Identity of a path on a case-insensitive file system (the macOS and Windows default)."""
+    return unicodedata.normalize("NFC", path).casefold()
 
 
 def sanitize_files(
@@ -81,6 +115,7 @@ def sanitize_files(
 ) -> tuple[list[GeneratedFile], list[ValidationIssue]]:
     """Drop unsafe/oversized/duplicate files before they are persisted or zipped."""
     collector = _Collector()
+    # Keyed by path_key: "README.md" and "readme.md" would overwrite each other when extracted.
     accepted: dict[str, GeneratedFile] = {}
     total = 0
     for file in files:
@@ -94,16 +129,22 @@ def sanitize_files(
                 "error", "file-size", f"File exceeds {limits.max_file_bytes} bytes.", path
             )
             continue
-        if path in accepted:
-            total -= len(accepted[path].content.encode())
-            collector.add("warning", "duplicate-path", "Later duplicate replaced earlier.", path)
-        if len(accepted) >= limits.max_files and path not in accepted:
+        key = path_key(path)
+        if key in accepted:
+            total -= len(accepted[key].content.encode())
+            message = (
+                "Later duplicate replaced earlier."
+                if accepted[key].path == path
+                else f"Replaced {accepted[key].path!r}, which differs only in letter case."
+            )
+            collector.add("warning", "duplicate-path", message, path)
+        elif len(accepted) >= limits.max_files:
             collector.add("error", "file-count", f"More than {limits.max_files} files; truncated.")
             break
         if total + size > limits.max_total_bytes:
             collector.add("error", "total-size", "Project exceeds the total size limit.", path)
             break
-        accepted[path] = file.model_copy(update={"path": path})
+        accepted[key] = file.model_copy(update={"path": path})
         total += size
     return list(accepted.values()), collector.issues
 

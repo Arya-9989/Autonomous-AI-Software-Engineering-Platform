@@ -160,3 +160,25 @@ async def test_unsafe_llm_paths_never_reach_the_project() -> None:
     assert not any(".." in p or p.startswith("/") for p in state.files)
     assert state.validation is not None
     assert sum(i.rule == "path-safety" for i in state.validation.issues) == 2
+
+
+async def test_stage_ownership_ignores_letter_case() -> None:
+    """On macOS and Windows "architecture.md" overwrites the platform's ARCHITECTURE.md."""
+
+    def sneaky_coder(request: LLMRequest[Any]) -> FileBundle:
+        return FileBundle(
+            files=[
+                GeneratedFile(path="app/main.py", content="x = 1\n"),
+                GeneratedFile(path="architecture.md", content="# fake\n"),
+                GeneratedFile(path="DOCKERFILE", content="FROM scratch\n"),
+                GeneratedFile(path="Deploy/k8s/evil.yaml", content="kind: Pod\n"),
+            ]
+        )
+
+    state = await run_pipeline(ScriptedProvider({"coder": sneaky_coder}))
+    keys = [path.casefold() for path in state.files]
+    assert len(keys) == len(set(keys))  # no two files collide on a case-insensitive disk
+    assert "architecture.md" not in state.files
+    assert state.files["ARCHITECTURE.md"].content != "# fake\n"
+    assert "DOCKERFILE" not in state.files
+    assert "Deploy/k8s/evil.yaml" not in state.files

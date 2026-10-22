@@ -53,9 +53,43 @@ def test_unsafe_paths_are_rejected(path: str) -> None:
     assert normalize_path(path) is None
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".GIT/config", "app/.Git/hooks/post-checkout", "GIT~1/config",  # .git, any spelling
+        ".git./hooks/x", ".git /hooks/x", ".. /escape.py", "app/... /x",  # trailing . or space
+        ".g\u200cit/config", "app/\u202emain.py",  # Unicode format characters (HFS+ ignores some)
+        "CON", "app/nul.txt", "LPT1.py", "aux/x.py",  # Windows device names
+        "app/main.py:evil", "a<b.py", 'x"y', "what?.md", "a|b", "star*.py",  # invalid on Windows
+        "app/ma\nin.py", "tab\t.py", "del\x7f.py",  # control characters
+    ],
+)  # fmt: skip
+def test_paths_unsafe_on_macos_or_windows_are_rejected(path: str) -> None:
+    assert normalize_path(path) is None
+
+
 def test_safe_paths_are_normalised() -> None:
     assert normalize_path(" app/main.py ") == "app/main.py"
     assert normalize_path(".github/workflows/ci.yml") == ".github/workflows/ci.yml"
+    for path in (".gitignore", ".gitattributes", "docs/git-workflow.md", "console.py",
+                 "app/connect.py", "café/menu.md", "v1.2/notes.md", ".dockerignore"):  # fmt: skip
+        assert normalize_path(path) == path
+
+
+def test_paths_differing_only_in_case_are_one_file() -> None:
+    files = [
+        GeneratedFile(path="README.md", content="first\n"),
+        GeneratedFile(path="app/main.py", content="x = 1\n"),
+        GeneratedFile(path="readme.md", content="second\n"),
+    ]
+    kept, issues = sanitize_files(files, Limits())
+    assert [(f.path, f.content) for f in kept] == [
+        ("readme.md", "second\n"),
+        ("app/main.py", "x = 1\n"),
+    ]
+    (issue,) = issues
+    assert issue.rule == "duplicate-path"
+    assert "differs only in letter case" in issue.message
 
 
 def test_sanitize_enforces_limits_and_dedupes() -> None:
