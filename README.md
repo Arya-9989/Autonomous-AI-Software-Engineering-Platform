@@ -1,5 +1,11 @@
 # Autonomous AI Software Engineering Platform
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/hero-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/hero-light.svg">
+  <img alt="AutoSWE: plain English in, deployable project out. The five-agent pipeline, all stages done; offline run on the library spec: 32 files, 0 errors, review 100/100." src="docs/hero-dark.svg">
+</picture>
+
 [![CI](https://github.com/Arya-9989/Autonomous-AI-Software-Engineering-Platform/actions/workflows/ci.yml/badge.svg)](https://github.com/Arya-9989/Autonomous-AI-Software-Engineering-Platform/actions/workflows/ci.yml)
 ![Python 3.12](https://img.shields.io/badge/python-3.12-3776ab)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -16,7 +22,10 @@ on a deterministic **offline provider** that needs no API key, so tests, CI and 
 > The platform **generates** infrastructure code. It never runs `terraform apply` or deploys
 > anything to AWS for you. The generated Terraform is checked with `terraform validate` in CI.
 
-![Job view: live stage tracker, activity stream and generated file browser](docs/screenshots/job-files.png)
+![A job running live: the five agents hand over one by one, events stream in, then the generated files open](docs/job-running.gif)
+
+<sub>A real job on the library spec, recorded from the studio with the offline provider and
+`OFFLINE_DELAY_S=0.8` so each stage stays on screen long enough to see.</sub>
 
 ## Features
 
@@ -52,34 +61,50 @@ on a deterministic **offline provider** that needs no API key, so tests, CI and 
 - **Security**: API-key auth with jobs scoped to each principal (cross-tenant access returns 404),
   per-principal active-job limits, a strict CSP and security headers, a non-root container, and
   no secrets in code.
-- **Web UI** (React, TypeScript, Tailwind):
-  - Spec composer with examples.
-  - Live stage tracker and activity log.
-  - File tree with Shiki syntax highlighting.
-  - Architecture view with a Mermaid diagram, review score and findings.
-  - Dark mode, responsive layout, and loading, empty and error states.
+- **Web UI** (React, TypeScript, Tailwind, Motion, Radix):
+  - A product page at `/`, dark-first, built from a real offline run of the pipeline: a replay
+    of the run on the five-agent rail, a scroll story that shows what each agent produced, and an
+    unedited view of the generated code. A test regenerates that data and fails on drift.
+  - The studio at `/app`: spec composer with examples, a live pipeline timeline and streaming
+    activity log, file tree with Shiki highlighting, architecture (Mermaid), review and
+    requirements tabs, a ⌘K / Ctrl+K command palette, toasts and accessible dialogs.
+  - Light and dark themes that follow the OS (with a manual switch), reduced-motion support,
+    designed loading, empty and error states, and layouts from 390px up. Playwright and axe
+    check every page for WCAG 2.2 AA in CI.
 - **Deployment for the platform itself**: a Kustomize base and AWS Terraform (ECS Fargate, ALB,
   RDS, Secrets Manager).
 - **CLI**: `autoswe generate "<spec>" --out ./project` runs the whole pipeline locally.
 
 <table>
   <tr>
-    <td><img src="docs/screenshots/home.png" alt="Spec composer"></td>
-    <td><img src="docs/screenshots/job-architecture.png" alt="Architecture view with component diagram"></td>
+    <td><img src="docs/screenshots/landing-hero-dark.png" alt="Product page hero: Plain English in. Deployable project out."></td>
+    <td><img src="docs/screenshots/landing-story-dark.png" alt="How it works: the architect's real output beside the pinned five-agent rail"></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/job-review.png" alt="Validation and review report"></td>
-    <td><img src="docs/screenshots/job-dark.png" alt="Dark mode"></td>
+    <td><img src="docs/screenshots/landing-output-dark.png" alt="Output: unedited generated code in a highlighted viewer"></td>
+    <td><img src="docs/screenshots/landing-highlights-light.png" alt="Highlights carousel in the light theme, with pager and pause control"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/job-running-dark.png" alt="Studio: a job running, with the live timeline and activity stream"></td>
+    <td><img src="docs/screenshots/job-files-dark.png" alt="Studio: generated file tree and highlighted code"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/job-architecture-light.png" alt="Studio: architecture tab with the component diagram, light theme"></td>
+    <td><img src="docs/screenshots/job-review-dark.png" alt="Studio: review score, validation and findings"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/new-project-light.png" alt="Studio: spec composer with an example filled in, light theme"></td>
+    <td><img src="docs/screenshots/command-palette-dark.png" alt="Studio: command palette"></td>
   </tr>
 </table>
 
 <p align="center">
-  <img src="docs/screenshots/mobile-home.png" alt="Mobile: composer" width="260">
+  <img src="docs/screenshots/mobile-landing-dark.png" alt="Mobile: product page" width="260">
   &nbsp;
-  <img src="docs/screenshots/mobile-job.png" alt="Mobile: job view" width="260">
+  <img src="docs/screenshots/mobile-job-dark.png" alt="Mobile: job view" width="260">
 </p>
 
-All screenshots are of the real application running the offline provider.
+All screenshots and the recording are of the real application running the offline provider.
 
 ## Architecture
 
@@ -146,7 +171,8 @@ cp .env.example .env                     # AUTH_DISABLED=true, SQLite in ./data
 uv run autoswe serve                     # http://localhost:8000, API docs at /api/docs
 ```
 
-For UI work, run `npm run dev` in `frontend/`. It proxies `/api` to `localhost:8000`.
+For UI work, run `npm run dev` in `frontend/`. It proxies `/api` to `localhost:8000`. The
+product page is at `/` and the studio at `/app`.
 
 ### CLI
 
@@ -185,6 +211,7 @@ All settings are environment variables (a `.env` file is read if present).
 | `API_KEYS` | (empty) | Comma-separated `principal:key` pairs; keys must be at least 16 characters |
 | `AUTH_DISABLED` | `false` | Local development only. Without keys **and** without this flag, the app refuses to start |
 | `LLM_DEFAULT_PROVIDER` | `auto` | `auto`, `anthropic` or `offline` |
+| `OFFLINE_DELAY_S` | `0` | Seconds the offline provider waits per agent call, so demos can watch live progress (0–10) |
 | `ANTHROPIC_API_KEY` | (empty) | Enables the Claude provider |
 | `ANTHROPIC_MODEL` | `claude-opus-5-5` | Model ID |
 | `ANTHROPIC_EFFORT` | (per agent) | Force one effort level for every agent |
@@ -252,8 +279,9 @@ development its Docker image was also built and run, and it reported `healthy`.
 
 ```bash
 uv run ruff check . && uv run ruff format --check . && uv run mypy   # lint, format, strict types
-uv run pytest -q                                                      # 141 tests
-cd frontend && npm run lint && npm run typecheck && npm test && npm run build
+uv run pytest -q                                                      # 147 tests
+cd frontend && npm run lint && npm run typecheck && npm test && npm run build   # 17 unit tests
+npm run e2e        # in frontend/, after the build: 17 Playwright + axe tests on the real stack
 ```
 
 The backend tests cover:
@@ -271,6 +299,13 @@ The backend tests cover:
 - That the migrations match the models.
 - The Anthropic provider (fake client).
 - An end-to-end test that runs a generated project's own lint and tests.
+- That the product page's sample data still matches what the offline pipeline produces.
+
+The Playwright suite starts the real server (FastAPI, worker, offline provider) on port 5150
+and checks the product page and the studio: axe finds no serious or critical WCAG 2.2 AA
+issues in either theme at desktop and phone sizes, nothing overflows at 390px, a job runs live
+through all five agents, and the carousel, command palette, dialogs and not-found states work.
+Set `E2E_SERVER_COMMAND` if `uv` is not on your `PATH`.
 
 ## Deploying the platform
 
@@ -330,6 +365,9 @@ src/autoswe/
 ├── worker.py, events.py        # DB-backed queue, notifier
 └── security.py, observability.py, logging_config.py, config.py, schemas.py
 frontend/                       # Vite + React + TypeScript + Tailwind UI
+├── src/landing/                # product page (/), sample.json = one real offline run
+├── src/app/                    # studio (/app): shell, timeline, activity, command palette
+└── e2e/                        # Playwright + axe tests
 deploy/k8s, deploy/terraform    # deploying the platform itself
 tests/                          # pytest suite
 ```
