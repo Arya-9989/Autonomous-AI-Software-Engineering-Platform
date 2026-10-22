@@ -6,6 +6,7 @@ import logging
 import re
 import time
 import uuid
+from collections.abc import Iterable
 from typing import Any
 
 from prometheus_client import (
@@ -79,22 +80,37 @@ SECURITY_HEADERS: tuple[tuple[bytes, bytes], ...] = (
     (b"x-content-type-options", b"nosniff"),
     (b"x-frame-options", b"DENY"),
     (b"referrer-policy", b"strict-origin-when-cross-origin"),
-    (
-        b"content-security-policy",
-        b"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-        b"img-src 'self' data:; font-src 'self' data:; connect-src 'self'; "
-        b"frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
-    ),
+    (b"cross-origin-opener-policy", b"same-origin"),
+    (b"permissions-policy", b"camera=(), microphone=(), geolocation=(), payment=(), usb=()"),
 )
 _DOCS_PATHS = ("/api/docs", "/api/redoc")
+# Swagger UI is a page FastAPI renders with one inline script and assets from jsDelivr.
+DOCS_CSP = (
+    b"default-src 'none'; script-src 'unsafe-inline' https://cdn.jsdelivr.net; "
+    b"style-src 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: "
+    b"https://fastapi.tiangolo.com; connect-src 'self'; frame-ancestors 'none'; "
+    b"base-uri 'none'; form-action 'none'"
+)
+
+
+def content_security_policy(script_hashes: Iterable[str] = ()) -> bytes:
+    """The app's CSP. ``script_hashes`` (``sha256-...``) admit the UI's inline scripts, which run
+    before the first paint (theme, preloads), without allowing inline script in general."""
+    sources = " ".join(["'self'", *(f"'{digest}'" for digest in script_hashes)])
+    return (
+        f"default-src 'self'; script-src {sources}; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; "
+        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    ).encode()
 
 
 class ObservabilityMiddleware:
     """Request IDs, access logs, latency/count metrics and security headers (pure ASGI, so
     streaming responses are not buffered)."""
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(self, app: ASGIApp, *, csp: bytes | None = None) -> None:
         self.app = app
+        self.csp = csp or content_security_policy()
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -115,10 +131,8 @@ class ObservabilityMiddleware:
                 response_headers = list(message.get("headers", []))
                 response_headers.append((b"x-request-id", request_id.encode()))
                 existing = {name.lower() for name, _ in response_headers}
-                for name, value in SECURITY_HEADERS:
-                    # Swagger UI loads its assets from a CDN; keep the strict CSP elsewhere.
-                    if name == b"content-security-policy" and is_docs:
-                        continue
+                csp = DOCS_CSP if is_docs else self.csp
+                for name, value in (*SECURITY_HEADERS, (b"content-security-policy", csp)):
                     if name not in existing:
                         response_headers.append((name, value))
                 message["headers"] = response_headers

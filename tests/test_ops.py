@@ -73,15 +73,24 @@ async def test_request_id_and_security_headers(harness: AppHarness) -> None:
     assert response.headers["x-request-id"] == "abc-123"
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["x-frame-options"] == "DENY"
-    assert "default-src 'self'" in response.headers["content-security-policy"]
+    assert response.headers["cross-origin-opener-policy"] == "same-origin"
+    assert "camera=()" in response.headers["permissions-policy"]
+    csp = response.headers["content-security-policy"]
+    assert "default-src 'self'" in csp
+    assert "script-src 'self';" in csp  # no frontend built here: no inline script hashes
+    assert "object-src 'none'" in csp
 
     generated = await harness.client.get("/healthz", headers={"X-Request-ID": "bad id\nx"})
     assert generated.headers["x-request-id"] != "bad id\nx"
     assert len(generated.headers["x-request-id"]) == 32
 
+    # Swagger UI gets its own policy: its CDN and inline bootstrap script, nothing else.
     docs = await harness.client.get("/api/docs")
     assert docs.status_code == 200
-    assert "content-security-policy" not in docs.headers
+    docs_csp = docs.headers["content-security-policy"]
+    assert "default-src 'none'" in docs_csp
+    assert "script-src 'unsafe-inline' https://cdn.jsdelivr.net;" in docs_csp
+    assert "frame-ancestors 'none'" in docs_csp
 
 
 def test_json_logs_carry_request_and_job_context() -> None:

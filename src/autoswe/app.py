@@ -6,13 +6,11 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 
 from autoswe import __version__
 from autoswe.api import jobs, system
@@ -23,10 +21,11 @@ from autoswe.events import JobNotifier
 from autoswe.llm.registry import ProviderRegistry, build_registry
 from autoswe.logging_config import configure_logging
 from autoswe.migrations.runner import upgrade_to_head
-from autoswe.observability import ObservabilityMiddleware
+from autoswe.observability import ObservabilityMiddleware, content_security_policy
 from autoswe.pipeline.orchestrator import Orchestrator
 from autoswe.pipeline.validation import Limits
 from autoswe.security import ApiKeyAuthenticator
+from autoswe.web import html_pages, inline_script_hashes, mount_frontend
 from autoswe.worker import Worker
 
 logger = logging.getLogger(__name__)
@@ -58,22 +57,6 @@ def build_services(
         worker=None,
     )
     return services, orchestrator
-
-
-def _mount_frontend(app: FastAPI, static_dir: Path) -> None:
-    index = static_dir / "index.html"
-    assets = static_dir / "assets"
-    if assets.is_dir():
-        app.mount("/assets", StaticFiles(directory=assets), name="assets")
-
-    @app.get("/{full_path:path}", include_in_schema=False)
-    def spa(full_path: str) -> FileResponse:  # sync: filesystem checks run in the threadpool
-        if full_path.startswith(("api/", "assets/")):
-            raise HTTPException(status.HTTP_404_NOT_FOUND)
-        candidate = (static_dir / full_path).resolve()
-        if full_path and candidate.is_file() and candidate.is_relative_to(static_dir.resolve()):
-            return FileResponse(candidate)
-        return FileResponse(index, headers={"Cache-Control": "no-cache"})
 
 
 def create_app(
@@ -133,7 +116,15 @@ def create_app(
     app.state.services = services
     app.state.orchestrator = orchestrator
 
-    app.add_middleware(ObservabilityMiddleware)
+    static_dir = settings.resolved_static_dir
+    script_hashes = sorted(
+        {
+            digest
+            for page in (html_pages(static_dir) if static_dir is not None else [])
+            for digest in inline_script_hashes(page.read_text(encoding="utf-8"))
+        }
+    )
+    app.add_middleware(ObservabilityMiddleware, csp=content_security_policy(script_hashes))
     if settings.cors_origins:
         app.add_middleware(
             CORSMiddleware,
@@ -164,9 +155,8 @@ def create_app(
     app.include_router(system.router)
     app.include_router(jobs.router)
 
-    static_dir = settings.resolved_static_dir
     if static_dir is not None:
-        _mount_frontend(app, static_dir)
+        mount_frontend(app, static_dir)
     else:
 
         @app.get("/", include_in_schema=False)
