@@ -61,6 +61,9 @@ test.describe("studio", () => {
     await page.getByRole("tab", { name: "Requirements" }).click();
     await expect(page.getByText("Original specification")).toBeVisible();
 
+    // Audit the finished page, not the "Job queued" toast halfway through fading out (its text
+    // is mid-opacity then, which axe reads as low contrast).
+    await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, { timeout: 10_000 });
     for (const colorScheme of ["light", "dark"] as const) {
       await page.emulateMedia({ colorScheme });
       await page.getByRole("tab", { name: "Files" }).click();

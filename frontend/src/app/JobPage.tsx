@@ -2,25 +2,38 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, FileSearch, Square, Trash2, XCircle } from "lucide-react";
 import { m } from "motion/react";
 import { AlertDialog, Tabs } from "radix-ui";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { toast } from "sonner";
+import { toast } from "../lib/toast";
 
-import { ArchitectureView } from "../components/ArchitectureView";
 import { FileExplorer } from "../components/FileExplorer";
-import { ReviewView } from "../components/ReviewView";
-import { SpecView } from "../components/SpecView";
 import { Button, Card, EmptyState, ErrorState, Skeleton } from "../components/ui";
 import { pill } from "../lib/pill";
 import { useJobEvents } from "../hooks/useJobEvents";
 import { api, ApiError } from "../lib/api";
 import { cx } from "../lib/cx";
 import { formatDuration, formatRelative, formatTokens } from "../lib/format";
+import { whenIdle } from "../lib/idle";
 import { SPRING } from "../lib/motion";
 import { TERMINAL } from "../lib/types";
 import { ActivityLog } from "./ActivityLog";
 import { StageTimeline } from "./StageTimeline";
 import { StatusBadge } from "./StatusBadge";
+
+// Tabs other than Files load their code when the page is idle (or when opened, if sooner).
+const loadTabs = () =>
+  Promise.all([
+    import("../components/ArchitectureView"),
+    import("../components/ReviewView"),
+    import("../components/SpecView"),
+  ]);
+const ArchitectureView = lazy(() => loadTabs().then(([module]) => ({ default: module.ArchitectureView })));
+const ReviewView = lazy(() => loadTabs().then(([, module]) => ({ default: module.ReviewView })));
+const SpecView = lazy(() => loadTabs().then(([, , module]) => ({ default: module.SpecView })));
+
+function TabFallback() {
+  return <Skeleton className="h-64 rounded-[18px]" />;
+}
 
 type Tab = "files" | "architecture" | "review" | "spec";
 
@@ -74,14 +87,30 @@ export function JobPage() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>("files");
   const [focus, setFocus] = useState<string | null>(null);
-
   const job = useQuery({
     queryKey: ["job", jobId],
     queryFn: () => api.getJob(jobId),
     // SSE drives updates; polling is only a safety net.
     refetchInterval: (query) => (query.state.data && !TERMINAL.has(query.state.data.status) ? 5000 : false),
   });
-  const { events, status: streamStatus } = useJobEvents(jobId);
+  // The output browser (file tree, code, diagrams) sits below the fold and is the heaviest part
+  // to render: once the job has loaded, give it its own frame so the title and timeline paint
+  // first.
+  const loaded = job.data !== undefined;
+  const [showOutput, setShowOutput] = useState(false);
+  useEffect(() => {
+    if (!loaded) return;
+    const frame = requestAnimationFrame(() => setShowOutput(true));
+    const cancelIdle = whenIdle(() => void loadTabs());
+    return () => {
+      cancelAnimationFrame(frame);
+      cancelIdle();
+    };
+  }, [loaded]);
+  // Stream only once the job is known to exist: an unknown id needs no second 404.
+  const { events, status: streamStatus } = useJobEvents(job.data ? jobId : undefined, {
+    refresh: job.data ? !TERMINAL.has(job.data.status) : true,
+  });
 
   const title = job.data?.project_name ?? job.data?.title;
   useEffect(() => {
@@ -271,50 +300,58 @@ export function JobPage() {
         </div>
       </div>
 
-      <Tabs.Root value={tab} onValueChange={(value) => setTab(value as Tab)} className="mt-12">
-        <Tabs.List
-          aria-label="Job output"
-          className="no-scrollbar inline-flex max-w-full gap-0.5 overflow-x-auto rounded-full bg-ink/[0.06] p-1"
-        >
-          {TABS.map((item) => (
-            <Tabs.Trigger
-              key={item.id}
-              value={item.id}
-              className={cx(
-                "relative shrink-0 rounded-full px-4 py-1.5 text-[14px] leading-5 tracking-[-0.016em] transition-colors duration-200 pointer-coarse:py-3",
-                tab === item.id ? "text-ink" : "text-ink-2 hover:text-ink",
-              )}
-            >
-              {tab === item.id && (
-                <m.span
-                  layoutId="job-tab"
-                  transition={SPRING}
-                  className="absolute inset-0 rounded-full bg-surface shadow-sm ring-1 ring-hairline"
-                  aria-hidden
-                />
-              )}
-              <span className="relative">
-                {item.label}
-                {item.id === "review" && data.review_score !== null && (
-                  <span className="ml-1.5 text-[12px] text-ink-2 tabular-nums">{data.review_score}</span>
+      {showOutput && (
+        <Tabs.Root value={tab} onValueChange={(value) => setTab(value as Tab)} className="mt-12">
+          <Tabs.List
+            aria-label="Job output"
+            className="no-scrollbar inline-flex max-w-full gap-0.5 overflow-x-auto rounded-full bg-ink/[0.06] p-1"
+          >
+            {TABS.map((item) => (
+              <Tabs.Trigger
+                key={item.id}
+                value={item.id}
+                className={cx(
+                  "relative shrink-0 rounded-full px-4 py-1.5 text-[14px] leading-5 tracking-[-0.016em] transition-colors duration-200 pointer-coarse:py-3",
+                  tab === item.id ? "text-ink" : "text-ink-2 hover:text-ink",
                 )}
-              </span>
-            </Tabs.Trigger>
-          ))}
-        </Tabs.List>
-        <Tabs.Content value="files" className="pt-6 outline-none">
-          <FileExplorer jobId={jobId} focus={focus} running={running} />
-        </Tabs.Content>
-        <Tabs.Content value="architecture" className="pt-6 outline-none">
-          <ArchitectureView jobId={jobId} />
-        </Tabs.Content>
-        <Tabs.Content value="review" className="pt-6 outline-none">
-          <ReviewView jobId={jobId} onOpenFile={openFile} />
-        </Tabs.Content>
-        <Tabs.Content value="spec" className="pt-6 outline-none">
-          <SpecView jobId={jobId} spec={data.spec} />
-        </Tabs.Content>
-      </Tabs.Root>
+              >
+                {tab === item.id && (
+                  <m.span
+                    layoutId="job-tab"
+                    transition={SPRING}
+                    className="absolute inset-0 rounded-full bg-surface shadow-sm ring-1 ring-hairline"
+                    aria-hidden
+                  />
+                )}
+                <span className="relative">
+                  {item.label}
+                  {item.id === "review" && data.review_score !== null && (
+                    <span className="ml-1.5 text-[12px] text-ink-2 tabular-nums">{data.review_score}</span>
+                  )}
+                </span>
+              </Tabs.Trigger>
+            ))}
+          </Tabs.List>
+          <Tabs.Content value="files" className="pt-6 outline-none">
+            <FileExplorer jobId={jobId} focus={focus} running={running} />
+          </Tabs.Content>
+          <Tabs.Content value="architecture" className="pt-6 outline-none">
+            <Suspense fallback={<TabFallback />}>
+              <ArchitectureView jobId={jobId} />
+            </Suspense>
+          </Tabs.Content>
+          <Tabs.Content value="review" className="pt-6 outline-none">
+            <Suspense fallback={<TabFallback />}>
+              <ReviewView jobId={jobId} onOpenFile={openFile} />
+            </Suspense>
+          </Tabs.Content>
+          <Tabs.Content value="spec" className="pt-6 outline-none">
+            <Suspense fallback={<TabFallback />}>
+              <SpecView jobId={jobId} spec={data.spec} />
+            </Suspense>
+          </Tabs.Content>
+        </Tabs.Root>
+      )}
     </div>
   );
 }
