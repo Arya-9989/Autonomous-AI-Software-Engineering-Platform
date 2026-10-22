@@ -9,15 +9,24 @@ import { filesByStage, sample } from "./sample";
 
 /** Real output of each agent in the library example, drawn from sample.json. */
 
-function Panel({ children, className }: { children: ReactNode; className?: string }) {
+/** `bare` drops the frame, for a panel shown inside another card (the pinned story). */
+export function Panel({
+  children,
+  className,
+  bare,
+}: {
+  children: ReactNode;
+  className?: string;
+  bare?: boolean;
+}) {
   return (
-    <div className={cx("rounded-[20px] bg-canvas p-5 ring-1 ring-hairline md:p-6", className)}>
+    <div className={cx(!bare && "rounded-[20px] bg-canvas p-5 ring-1 ring-hairline md:p-6", className)}>
       {children}
     </div>
   );
 }
 
-function Label({ children }: { children: ReactNode }) {
+export function Label({ children }: { children: ReactNode }) {
   return <p className="t-eyebrow mb-3 text-ink-2">{children}</p>;
 }
 
@@ -28,9 +37,9 @@ const METHOD_TONE: Record<string, string> = {
   DELETE: "text-bad",
 };
 
-function Entities() {
+export function Entities({ bare }: { bare?: boolean }) {
   return (
-    <Panel>
+    <Panel bare={bare}>
       <Label>Requirements · entities</Label>
       <div className="grid grid-cols-2 gap-3">
         {sample.requirements.entities.map((entity) => (
@@ -58,11 +67,11 @@ function Entities() {
   );
 }
 
-function Design() {
+export function Design({ bare }: { bare?: boolean }) {
   const shown = 6;
   const endpoints = sample.architecture.endpoints;
   return (
-    <Panel>
+    <Panel bare={bare}>
       <Label>Architecture · {sample.architecture.style}</Label>
       <ul className="grid grid-cols-2 gap-2">
         {sample.architecture.components.map((component) => (
