@@ -167,7 +167,7 @@ export function treeRows(files: Pick<FileEntry, "path" | "stage" | "size">[] = s
 // --- Code the agents write, revealed line by line ------------------------------------------------
 
 export const CODE_FILES = [
-  { stage: 2, path: "app/models.py" },
+  { stage: 2, path: "app/routers/books.py" },
   { stage: 3, path: "Dockerfile" },
 ] as const;
 

@@ -3,7 +3,9 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { countFrame } from "./countFrame";
+import { AGENTS } from "../lib/stages";
 import { CHECK_COUNT, GROUPS } from "./checks";
+import { COPY_COUNT } from "./StoryCopy";
 import { filesByStage, sample } from "./sample";
 import {
   bands,
@@ -17,10 +19,14 @@ import {
   VERDICT,
 } from "./storyModel";
 
-const css = readFileSync(new URL("../index.css", import.meta.url), "utf8");
+const css = readFileSync(new URL("./story.css", import.meta.url), "utf8");
 const rows = treeRows();
 
 describe("pinned story timing", () => {
+  it("has one copy and one band per agent", () => {
+    expect(COPY_COUNT).toBe(AGENTS.length);
+  });
+
   it("gives the five agents equal, ordered bands inside the story", () => {
     expect(bands).toHaveLength(5);
     bands.forEach((band, k) => {
@@ -31,7 +37,7 @@ describe("pinned story timing", () => {
     expect(bands.at(-1)!.end).toBeLessThan(1);
   });
 
-  it("matches the tree-shift keyframes in index.css", () => {
+  it("matches the tree-shift keyframes in story.css", () => {
     // sx-tree moves rows at the coder's and the DevOps engineer's band starts.
     for (const k of [2, 3]) {
       const start = Math.round(bands[k]!.start * 100);
@@ -118,8 +124,9 @@ describe("pinned story code and review", () => {
   });
 
   it("scrolls a long file just far enough to show its last line", () => {
-    const models = codeLines("app/models.py");
-    expect(codeFollow("app/models.py", rows.length)?.rows).toBe(models.length - rows.length);
+    const router = codeLines(CODE_FILES[0].path);
+    expect(router.length).toBeGreaterThan(rows.length);
+    expect(codeFollow(CODE_FILES[0].path, rows.length)?.rows).toBe(router.length - rows.length);
     expect(codeFollow("Dockerfile", rows.length)).toBeNull();
   });
 

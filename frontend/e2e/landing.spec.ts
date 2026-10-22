@@ -136,6 +136,23 @@ test.describe("landing page", () => {
     expect(await rowOpacity(page, "models.py")).toBeLessThan(0.05);
   });
 
+  test("swapping in the pinned story moves nothing below it", async ({ page, browser }) => {
+    const outputTop = (p: Page) =>
+      p.evaluate(() => document.getElementById("output")!.getBoundingClientRect().top + window.scrollY);
+    const noScript = await browser.newContext({
+      javaScriptEnabled: false,
+      viewport: { width: 1440, height: 900 },
+    });
+    const prerendered = await noScript.newPage();
+    await prerendered.goto("/");
+    const before = await outputTop(prerendered);
+    await noScript.close();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/");
+    await expect(page.locator(".story-pinned")).toBeVisible();
+    expect(Math.abs((await outputTop(page)) - before)).toBeLessThanOrEqual(1);
+  });
+
   test("with reduced motion the story is static, complete and nothing is faded", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -144,7 +161,9 @@ test.describe("landing page", () => {
     await expect(page.locator(".story-pinned")).toHaveCount(0);
     for (const title of STAGE_TITLES) await expect(story.getByRole("heading", { name: title })).toBeVisible();
     for (const stage of sample.stages) await expect(story.getByText(stage.summary)).toBeVisible();
-    await expect(story.getByRole("region", { name: /app\/models\.py/ })).toContainText("class Loan(Base)");
+    await expect(story.getByRole("region", { name: /app\/routers\/books\.py/ })).toContainText(
+      "@router.post",
+    );
     const faded = await story.evaluate((root) =>
       [...root.querySelectorAll<HTMLElement>("h3, p, li, pre")]
         .filter((el) => el.offsetHeight > 0 && Number(getComputedStyle(el).opacity) < 0.1)
@@ -214,7 +233,9 @@ test.describe("landing page without JavaScript", () => {
     const story = page.locator("#how-it-works");
     for (const title of STAGE_TITLES) await expect(story.getByRole("heading", { name: title })).toBeVisible();
     for (const stage of sample.stages) await expect(story.getByText(stage.summary)).toBeVisible();
-    await expect(story.getByRole("region", { name: /^Dockerfile/ })).toContainText("HEALTHCHECK");
+    await expect(story.getByRole("region", { name: /app\/routers\/books\.py/ })).toContainText(
+      "@router.post",
+    );
     await expect(stat(page, "Files checked")).toHaveText(String(sample.validation.files_checked));
     await expect(stat(page, "Checks")).toHaveText(String(CHECKS));
     // The section in view is marked even though no script measured the links.
