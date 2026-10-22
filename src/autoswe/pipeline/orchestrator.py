@@ -72,10 +72,13 @@ class Orchestrator:
 
     async def _finish(
         self, job_id: str, event_type: str, payload: dict[str, Any], **values: Any
-    ) -> None:
+    ) -> bool:
         async with self._db.session() as session:
-            await JobRepository(session).finish(job_id, event_type, payload, **values)
+            finished = await JobRepository(session).finish(job_id, event_type, payload, **values)
+        if not finished:
+            logger.warning("job left running state before it finished; outcome kept")
         self._notifier.notify_job(job_id)
+        return finished
 
     async def _update_stage(self, job_id: str, stage: StageName, **values: Any) -> None:
         async with self._db.session() as session:
@@ -276,7 +279,9 @@ class Orchestrator:
                 JOBS_FINISHED.labels("unknown", JobStatus.CANCELLED.value).inc()
             else:
                 async with self._db.session() as session:
-                    await JobRepository(session).reset_for_retry(job_id)
+                    requeued = await JobRepository(session).reset_for_retry(job_id)
+                if requeued:
+                    self._notifier.notify_queue()
                 self._notifier.notify_job(job_id)
         except Exception:
             logger.exception("could not record interruption")

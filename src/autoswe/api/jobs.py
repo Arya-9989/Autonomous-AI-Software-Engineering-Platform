@@ -115,12 +115,16 @@ async def cancel_job(
     job = await _owned_job(repo, job_id, principal.name)
     if job.status.terminal:
         raise HTTPException(status.HTTP_409_CONFLICT, detail=f"Job already {job.status.value}")
-    job = await repo.request_cancel(job)
-    if services.worker is not None:
+    outcome = await repo.request_cancel(job_id)
+    if outcome == "cancel_requested" and services.worker is not None:
         services.worker.cancel_local(job_id)
     services.notifier.notify_job(job_id)
     refreshed = await repo.get(job_id)
     assert refreshed is not None
+    if outcome is None:  # it finished between the read above and the cancel
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail=f"Job already {refreshed.status.value}"
+        )
     return JobDetail.from_model(refreshed)
 
 

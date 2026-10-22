@@ -85,6 +85,8 @@ async def test_live_stream_never_ends_before_the_terminal_event(
     """
     harness = await harness_factory(worker_enabled=False)
     job_id = (await harness.submit())["id"]
+    async with harness.app.state.services.db.session() as session:
+        assert await JobRepository(session).claim_next("w") == job_id  # finish() needs running
     orchestrator = harness.app.state.orchestrator
     real_status_of = JobRepository.status_of
     calls = 0

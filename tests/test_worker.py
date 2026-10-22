@@ -139,3 +139,66 @@ async def test_two_replicas_share_one_queue(harness_factory: HarnessFactory) -> 
             (await second.client.get(f"/api/v1/jobs/{job_id}/events", headers=ALICE)).text
         )
         assert [e["event"] for e in events].count("job.started") == 1
+
+
+async def test_cancel_racing_a_claim_flags_the_running_job(harness_factory: HarnessFactory) -> None:
+    """The API read the job as queued, then a worker claimed it before the cancel was written."""
+    harness = await harness_factory(worker_enabled=False)
+    job_id = (await harness.submit())["id"]
+    db = harness.app.state.services.db
+    async with db.session() as api_session:
+        api_repo = JobRepository(api_session)
+        seen = await api_repo.get(job_id)
+        assert seen is not None and seen.status is JobStatus.QUEUED
+        async with db.session() as worker_session:
+            assert await JobRepository(worker_session).claim_next("w1") == job_id
+        assert await api_repo.request_cancel(job_id) == "cancel_requested"
+
+    async with db.session() as session:
+        job = await JobRepository(session).get(job_id)
+        assert job is not None
+        # Still owned by the worker, which now stops at its next stage boundary (and the
+        # interrupt handler cancels instead of requeueing, because the flag is set).
+        assert job.status is JobStatus.RUNNING
+        assert job.cancel_requested is True
+        assert job.worker_id == "w1"
+
+
+async def test_cancel_api_reports_each_outcome(harness_factory: HarnessFactory) -> None:
+    harness = await harness_factory(worker_enabled=False)
+    job_id = (await harness.submit())["id"]
+    cancelled = await harness.client.post(f"/api/v1/jobs/{job_id}/cancel", headers=ALICE)
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+    assert {s["status"] for s in cancelled.json()["stages"]} == {"skipped"}
+    again = await harness.client.post(f"/api/v1/jobs/{job_id}/cancel", headers=ALICE)
+    assert again.status_code == 409
+    events = parse_sse(
+        (await harness.client.get(f"/api/v1/jobs/{job_id}/events", headers=ALICE)).text
+    )
+    assert [e["event"] for e in events].count("job.cancelled") == 1
+
+
+async def test_reaped_job_keeps_its_outcome_when_the_worker_returns(
+    harness_factory: HarnessFactory,
+) -> None:
+    harness = await harness_factory(worker_enabled=False)
+    job_id = (await harness.submit())["id"]
+    async with harness.app.state.services.db.session() as session:
+        repo = JobRepository(session)
+        assert await repo.claim_next("slow-worker") == job_id
+        await session.execute(
+            update(Job).where(Job.id == job_id).values(heartbeat_at=utcnow() - timedelta(hours=1))
+        )
+        await session.commit()
+        assert await repo.fail_stale(timedelta(minutes=5)) == [job_id]
+        # The worker was only paused (GC, network partition) and now tries to finish or requeue.
+        assert not await repo.finish(job_id, "job.succeeded", {}, status=JobStatus.SUCCEEDED)
+        assert not await repo.reset_for_retry(job_id)
+        assert await repo.status_of(job_id) is JobStatus.FAILED
+
+    events = parse_sse(
+        (await harness.client.get(f"/api/v1/jobs/{job_id}/events", headers=ALICE)).text
+    )
+    terminal = [e["event"] for e in events if e["event"] in {"job.failed", "job.succeeded"}]
+    assert terminal == ["job.failed"]

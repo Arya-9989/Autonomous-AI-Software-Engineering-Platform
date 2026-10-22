@@ -23,6 +23,11 @@ from autoswe.pipeline.artifacts import STAGE_ORDER, GeneratedFile
 ACTIVE_STATUSES = (JobStatus.QUEUED, JobStatus.RUNNING)
 
 
+def _rowcount(result: object) -> int:
+    """Rows matched by an UPDATE (``CursorResult.rowcount``; typed loosely by SQLAlchemy)."""
+    return int(getattr(result, "rowcount", 0) or 0)
+
+
 class JobRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -42,7 +47,9 @@ class JobRepository:
         return job
 
     async def get(self, job_id: str, owner: str | None = None) -> Job | None:
-        query = select(Job).where(Job.id == job_id)
+        # populate_existing: sessions keep objects after commit (expire_on_commit=False), so a
+        # re-read after a guarded UPDATE must not hand back the stale identity-map copy.
+        query = select(Job).where(Job.id == job_id).execution_options(populate_existing=True)
         if owner is not None:
             query = query.where(Job.owner == owner)
         return (await self.session.execute(query)).scalar_one_or_none()
@@ -64,18 +71,46 @@ class JobRepository:
         query = select(func.count()).where(Job.status == JobStatus.QUEUED)
         return int((await self.session.execute(query)).scalar_one())
 
-    async def request_cancel(self, job: Job) -> Job:
-        if job.status is JobStatus.QUEUED:
-            job.status = JobStatus.CANCELLED
-            job.finished_at = utcnow()
-            for stage in job.stages:
-                stage.status = StageStatus.SKIPPED
-            self.session.add(JobEvent(job_id=job.id, type="job.cancelled", payload={}))
-        elif job.status is JobStatus.RUNNING:
-            job.cancel_requested = True
-            self.session.add(JobEvent(job_id=job.id, type="job.cancel_requested", payload={}))
+    async def request_cancel(self, job_id: str) -> str | None:
+        """Cancel a queued job, or flag a running one; returns what happened.
+
+        Both branches are compare-and-set updates on the current status, so a cancel that races a
+        worker's claim cannot overwrite ``running`` with ``cancelled`` (the claimed job would then
+        run anyway, or be requeued by the interrupt handler). Whichever update matches decides:
+        ``"cancelled"`` (it was still queued), ``"cancel_requested"`` (it is running; the worker
+        stops at the next stage boundary) or ``None`` (it already finished).
+        """
+        now = utcnow()
+        queued = await self.session.execute(
+            update(Job)
+            .where(Job.id == job_id, Job.status == JobStatus.QUEUED)
+            .values(status=JobStatus.CANCELLED, finished_at=now, updated_at=now)
+            .execution_options(synchronize_session=False)
+        )
+        if _rowcount(queued) == 1:
+            await self.session.execute(
+                update(StageRun).where(StageRun.job_id == job_id).values(status=StageStatus.SKIPPED)
+            )
+            self.session.add(JobEvent(job_id=job_id, type="job.cancelled", payload={}))
+            await self.session.commit()
+            return "cancelled"
+        running = await self.session.execute(
+            update(Job)
+            .where(
+                Job.id == job_id,
+                Job.status == JobStatus.RUNNING,
+                Job.cancel_requested.is_(False),
+            )
+            .values(cancel_requested=True, updated_at=now)
+            .execution_options(synchronize_session=False)
+        )
+        if _rowcount(running) == 1:
+            self.session.add(JobEvent(job_id=job_id, type="job.cancel_requested", payload={}))
+            await self.session.commit()
+            return "cancel_requested"
         await self.session.commit()
-        return job
+        status = await self.status_of(job_id)
+        return "cancel_requested" if status is JobStatus.RUNNING else None
 
     async def delete(self, job: Job) -> None:
         await self.session.delete(job)
@@ -140,7 +175,7 @@ class JobRepository:
             .execution_options(synchronize_session=False)
         )  # fmt: skip
         await self.session.commit()
-        return candidate if getattr(result, "rowcount", 0) == 1 else None
+        return candidate if _rowcount(result) == 1 else None
 
     async def heartbeat(self, job_id: str) -> None:
         await self.session.execute(
@@ -160,17 +195,26 @@ class JobRepository:
 
     async def finish(
         self, job_id: str, event_type: str, payload: dict[str, Any], **values: Any
-    ) -> None:
-        """Set a terminal status and record its event in one transaction.
+    ) -> bool:
+        """Move a running job to a terminal status and record its event in one transaction.
 
         An event stream that sees the terminal status has therefore always been able to see
-        the terminal event too, so it never ends before sending it.
+        the terminal event too, so it never ends before sending it. The update only applies to
+        a job that is still ``running``: a job the reaper already failed (lost heartbeat) keeps
+        its outcome and gets no second terminal event. Returns whether the job was finished.
         """
-        await self.session.execute(
-            update(Job).where(Job.id == job_id).values(updated_at=utcnow(), **values)
+        result = await self.session.execute(
+            update(Job)
+            .where(Job.id == job_id, Job.status == JobStatus.RUNNING)
+            .values(updated_at=utcnow(), **values)
+            .execution_options(synchronize_session=False)
         )
+        if _rowcount(result) != 1:
+            await self.session.rollback()
+            return False
         self.session.add(JobEvent(job_id=job_id, type=event_type, payload=payload))
         await self.session.commit()
+        return True
 
     async def update_job(self, job_id: str, **values: Any) -> None:
         await self.session.execute(
@@ -218,8 +262,21 @@ class JobRepository:
         )
         await self.session.commit()
 
-    async def reset_for_retry(self, job_id: str) -> None:
-        """Put an interrupted job back in the queue with a clean slate."""
+    async def reset_for_retry(self, job_id: str) -> bool:
+        """Put an interrupted job back in the queue with a clean slate.
+
+        Only a job that is still ``running`` is requeued; one that was reaped or finished in the
+        meantime keeps its outcome. Returns whether the job was requeued.
+        """
+        requeued = await self.session.execute(
+            update(Job)
+            .where(Job.id == job_id, Job.status == JobStatus.RUNNING)
+            .values(status=JobStatus.QUEUED, updated_at=utcnow())
+            .execution_options(synchronize_session=False)
+        )
+        if _rowcount(requeued) != 1:
+            await self.session.rollback()
+            return False
         await self.session.execute(delete(JobFile).where(JobFile.job_id == job_id))
         await self.session.execute(
             update(StageRun)
@@ -236,6 +293,7 @@ class JobRepository:
         )  # fmt: skip
         self.session.add(JobEvent(job_id=job_id, type="job.requeued", payload={}))
         await self.session.commit()
+        return True
 
     async def fail_stale(self, older_than: timedelta) -> list[str]:
         """Fail running jobs whose worker stopped heart-beating (crash, OOM kill, lost node)."""
