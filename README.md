@@ -3,7 +3,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/hero-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="docs/hero-light.svg">
-  <img alt="AutoSWE: plain English in, deployable project out. The five-agent pipeline, all stages done; offline run on the library spec: 32 files, 0 errors, review 100/100." src="docs/hero-dark.svg">
+  <img alt="AutoSWE: plain English in, deployable project out. The five-agent pipeline, all stages done; offline run on the library spec: 37 files, 0 errors, review 100/100." src="docs/hero-dark.svg">
 </picture>
 
 [![CI](https://github.com/Arya-9989/Autonomous-AI-Software-Engineering-Platform/actions/workflows/ci.yml/badge.svg)](https://github.com/Arya-9989/Autonomous-AI-Software-Engineering-Platform/actions/workflows/ci.yml)
@@ -41,6 +41,14 @@ Animated WebP (479 KB), with a shorter GIF for clients that cannot show WebP.</s
   linter, type checker and tests (ruff/mypy/pytest, ESLint/`tsc`/`node --test`,
   gofmt/`go vet`/`go test`). The TypeScript and Go services use only their standard libraries and
   keep data in memory, which the architecture and review say plainly.
+- **Entity relationships and migrations** ([ADR 0008](docs/adr/0008-entity-relationships-and-migrations.md)):
+  the analyst finds many-to-one links ("members borrow books" makes a Loan belong to a Member and
+  a Book; `Comment(post:Post, ...)` declares one). In every stack, each link becomes a required
+  `<parent>_id` that must point at an existing parent, filters its lists, and cascades on delete.
+  Generated Python projects own their schema with Alembic: an initial revision with foreign keys
+  and indexes, `alembic upgrade head` before the server starts, and a test that the migrations
+  upgrade, match the models and downgrade cleanly. That test runs in the sandbox on every job,
+  and on PostgreSQL in CI.
 - **Five-agent pipeline**: requirements analyst → architect → code generator → DevOps engineer →
   reviewer. Each agent produces a typed Pydantic artifact (requirements, architecture spec, file
   bundle, review report).
@@ -474,7 +482,8 @@ From the offline provider (Claude follows the same contract):
 ```text
 library-api/
 ├── app/            main.py, db.py, models.py, schemas.py, routers/<entity>.py
-├── tests/          conftest.py (isolated SQLite), test_<entity>.py, test_health.py
+├── migrations/     env.py, script.py.mako, versions/0001_initial.py   (+ alembic.ini)
+├── tests/          conftest.py (migrated SQLite), test_<entity>.py, test_migrations.py, test_health.py
 ├── pyproject.toml  README.md  ARCHITECTURE.md (Mermaid + ADRs)  docs/architecture.json
 ├── Dockerfile      .dockerignore    (multi-stage, non-root, HEALTHCHECK)
 ├── .github/workflows/ci.yml          (ruff, pytest, image build)
@@ -683,8 +692,9 @@ tests/                          # pytest suite
 
 ## Limitations
 
-- The offline provider only understands CRUD-shaped specs: entities and fields, with no
-  relationships between entities and no business rules.
+- The offline provider only understands CRUD-shaped specs: entities, fields and many-to-one
+  links, with no business rules. Many-to-many links have to be written as a join entity, and
+  self-references (an employee's manager) are not generated.
 - Generated tests run in the sandbox only when one is configured (`SANDBOX_BACKEND`; compose sets
   it). The Kubernetes and AWS deployments in `deploy/` do not include the sandbox runner yet, and
   the gVisor runtime option has not been run.
@@ -695,7 +705,9 @@ tests/                          # pytest suite
 
 ## Roadmap (future work, not implemented)
 
-- Relationships between entities and Alembic migrations in generated projects.
+- Many-to-many links as a first-class relation, and a per-link choice between CASCADE and
+  RESTRICT (today every link cascades, and the review says so).
+- A database behind the TypeScript and Go stores.
 
 ## License
 
