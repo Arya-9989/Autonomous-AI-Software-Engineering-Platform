@@ -34,6 +34,7 @@ def make_settings(tmp_path: Path, **overrides: Any) -> Settings:
         "log_format": "console",
         "log_level": "WARNING",
         "worker_poll_interval_s": 0.05,
+        "worker_drain_s": 0,  # tests that drain say so
         "static_dir": tmp_path / "no-frontend",
     }
     values.update(overrides)

@@ -5,6 +5,7 @@ from __future__ import annotations
 from textwrap import dedent
 
 from autoswe.pipeline.artifacts import ArchitectureSpec, GeneratedFile
+from autoswe.stacks import Stack
 
 
 def _src(text: str) -> str:
@@ -28,11 +29,15 @@ def render_dockerfile(port: int) -> str:
         RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin app
         COPY --from=build /opt/venv /opt/venv
         WORKDIR /home/app
+        COPY alembic.ini ./
+        COPY migrations ./migrations
         USER 10001
         EXPOSE {port}
         HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \\
           CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:{port}/healthz', timeout=3)"]
-        CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "{port}"]
+        # Migrations first (a PostgreSQL advisory lock makes replicas that start together apply
+        # them once), then the server replaces the shell as PID 1.
+        CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port {port}"]
     """)
 
 
@@ -65,6 +70,21 @@ def render_ci(name: str) -> str:
         jobs:
           test:
             runs-on: ubuntu-latest
+            services:
+              postgres:
+                image: postgres:17-alpine
+                env:
+                  POSTGRES_USER: app
+                  POSTGRES_PASSWORD: app
+                  POSTGRES_DB: app_test
+                ports:
+                  - 5432:5432
+                options: >-
+                  --health-cmd "pg_isready -U app -d app_test"
+                  --health-interval 5s --health-timeout 3s --health-retries 10
+            env:
+              # tests/test_migrations.py checks the migrations on this PostgreSQL as well as SQLite.
+              TEST_DATABASE_URL: postgresql+psycopg://app:app@localhost:5432/app_test
             steps:
               - uses: actions/checkout@v7
               - uses: actions/setup-python@v7
@@ -77,6 +97,146 @@ def render_ci(name: str) -> str:
                 run: ruff check .
               - name: Test
                 run: pytest -q
+
+          image:
+            runs-on: ubuntu-latest
+            needs: test
+            steps:
+              - uses: actions/checkout@v7
+              - uses: docker/setup-buildx-action@v4
+              - name: Build image
+                uses: docker/build-push-action@v7
+                with:
+                  context: .
+                  push: false
+                  tags: {name}:${{{{ github.sha }}}}
+    """)
+
+
+def render_dockerfile_typescript(port: int) -> str:
+    return _src(f"""
+        # syntax=docker/dockerfile:1.7
+        # Node runs the TypeScript sources directly; the image needs no build step and no
+        # node_modules (the project has no runtime dependencies).
+        FROM node:24-slim
+        ENV NODE_ENV=production PORT={port}
+        WORKDIR /app
+        COPY package.json ./
+        COPY src ./src
+        USER 10001
+        EXPOSE {port}
+        HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \\
+          CMD ["node", "-e", "fetch('http://127.0.0.1:{port}/healthz').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+        CMD ["node", "src/server.ts"]
+    """)
+
+
+def render_dockerfile_go(port: int) -> str:
+    return _src(f"""
+        # syntax=docker/dockerfile:1.7
+        FROM golang:1.27-bookworm AS build
+        WORKDIR /src
+        COPY go.mod ./
+        COPY *.go ./
+        RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/app .
+
+        FROM gcr.io/distroless/static-debian12:nonroot
+        COPY --from=build /out/app /app
+        ENV PORT={port}
+        USER 65532
+        EXPOSE {port}
+        HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \\
+          CMD ["/app", "-healthcheck"]
+        ENTRYPOINT ["/app"]
+    """)
+
+
+DOCKERIGNORE_TYPESCRIPT = _src("""
+    .git
+    .github
+    node_modules/
+    deploy/
+    test/
+""")
+
+DOCKERIGNORE_GO = _src("""
+    .git
+    .github
+    deploy/
+    *_test.go
+""")
+
+
+def render_ci_typescript(name: str) -> str:
+    return _src(f"""
+        name: CI
+
+        on:
+          push:
+            branches: [main]
+          pull_request:
+
+        permissions:
+          contents: read
+
+        jobs:
+          test:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v7
+              - uses: actions/setup-node@v7
+                with:
+                  node-version: "24"
+              - name: Install the type checker and linter
+                run: npm install --no-audit --no-fund
+              - name: Lint
+                run: npm run lint
+              - name: Type check
+                run: npm run typecheck
+              - name: Test
+                run: npm test
+
+          image:
+            runs-on: ubuntu-latest
+            needs: test
+            steps:
+              - uses: actions/checkout@v7
+              - uses: docker/setup-buildx-action@v4
+              - name: Build image
+                uses: docker/build-push-action@v7
+                with:
+                  context: .
+                  push: false
+                  tags: {name}:${{{{ github.sha }}}}
+    """)
+
+
+def render_ci_go(name: str) -> str:
+    return _src(f"""
+        name: CI
+
+        on:
+          push:
+            branches: [main]
+          pull_request:
+
+        permissions:
+          contents: read
+
+        jobs:
+          test:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v7
+              - uses: actions/setup-go@v7
+                with:
+                  go-version-file: go.mod
+              - name: Format
+                run: test -z "$(gofmt -l .)"
+              - name: Vet
+                run: go vet ./...
+              - name: Test
+                run: go test ./...
 
           image:
             runs-on: ubuntu-latest
@@ -384,16 +544,24 @@ TF_OUTPUTS = _src("""
 """)
 
 
-def render_devops(project: str, architecture: ArchitectureSpec) -> list[GeneratedFile]:
+def render_devops(
+    project: str, architecture: ArchitectureSpec, stack: Stack = Stack.PYTHON
+) -> list[GeneratedFile]:
     port = architecture.deployment.container_port
     replicas = max(1, architecture.deployment.replicas)
+    dockerfile, dockerignore, ci = {
+        Stack.PYTHON: (render_dockerfile(port), DOCKERIGNORE, render_ci(project)),
+        Stack.TYPESCRIPT: (render_dockerfile_typescript(port), DOCKERIGNORE_TYPESCRIPT,
+                           render_ci_typescript(project)),
+        Stack.GO: (render_dockerfile_go(port), DOCKERIGNORE_GO, render_ci_go(project)),
+    }[stack]  # fmt: skip
     return [
-        GeneratedFile(path="Dockerfile", content=render_dockerfile(port),
-                      description="Multi-stage, non-root image with a health check"),
-        GeneratedFile(path=".dockerignore", content=DOCKERIGNORE,
+        GeneratedFile(path="Dockerfile", content=dockerfile,
+                      description="Non-root image with a health check"),
+        GeneratedFile(path=".dockerignore", content=dockerignore,
                       description="Keeps the build context small"),
-        GeneratedFile(path=".github/workflows/ci.yml", content=render_ci(project),
-                      description="Lint, test and image build on every push"),
+        GeneratedFile(path=".github/workflows/ci.yml", content=ci,
+                      description="Lint, type check, test and image build on every push"),
         GeneratedFile(path="deploy/k8s/deployment.yaml",
                       content=render_k8s_deployment(project, port, replicas),
                       description="Deployment with probes, limits and a restricted security context"),

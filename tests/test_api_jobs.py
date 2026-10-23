@@ -47,7 +47,7 @@ async def test_job_runs_to_completion_with_stage_progress(harness: AppHarness) -
     assert job["project_name"] == "library-api"
     assert all(stage["status"] == "succeeded" for stage in job["stages"])
     assert all(stage["duration_s"] is not None for stage in job["stages"])
-    assert job["validation"] == {"passed": True, "errors": 0, "warnings": 0, "files_checked": 32}
+    assert job["validation"] == {"passed": True, "errors": 0, "warnings": 0, "files_checked": 37}
     assert job["review_score"] == 100
     assert job["started_at"] is not None and job["finished_at"] is not None
 
@@ -78,7 +78,7 @@ async def test_generated_artifacts_are_browsable(harness: AppHarness) -> None:
     )
     review = (await client.get(f"/api/v1/jobs/{job_id}/review", headers=ALICE)).json()
     assert review["score"] == 100
-    assert review["validation"]["files_checked"] == 32
+    assert review["validation"]["files_checked"] == 37
 
 
 async def test_archive_download(harness: AppHarness) -> None:

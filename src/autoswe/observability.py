@@ -9,6 +9,7 @@ import uuid
 from collections.abc import Iterable
 from typing import Any
 
+from opentelemetry import trace
 from prometheus_client import (
     GC_COLLECTOR,
     PLATFORM_COLLECTOR,
@@ -47,6 +48,12 @@ JOBS_FINISHED = Counter(
     ["provider", "status"],
     registry=REGISTRY,
 )
+JOB_RETRIES = Counter(
+    "autoswe_job_retries_total",
+    "Jobs requeued to resume at a stage: transient (automatic, after a provider error) or manual",
+    ["reason"],
+    registry=REGISTRY,
+)
 JOBS_RUNNING = Gauge(
     "autoswe_jobs_running", "Jobs currently executing in this process", registry=REGISTRY
 )
@@ -66,6 +73,24 @@ LLM_TOKENS = Counter(
     ["provider", "direction"],
     registry=REGISTRY,
 )
+LLM_COST = Counter(
+    "autoswe_llm_cost_usd_total",
+    "Cost of LLM calls priced from the pricing table (unpriced models excluded)",
+    ["provider", "model"],
+    registry=REGISTRY,
+)
+BUDGET_REJECTIONS = Counter(
+    "autoswe_budget_rejections_total",
+    "Jobs refused at submission or stopped while running by a token budget",
+    ["where"],
+    registry=REGISTRY,
+)
+GITHUB_PUBLISH = Counter(
+    "autoswe_github_publish_total",
+    "Attempts to publish a generated project to GitHub, by outcome",
+    ["outcome"],
+    registry=REGISTRY,
+)
 VALIDATION_ISSUES = Counter(
     "autoswe_validation_issues_total",
     "Issues found by deterministic validation of generated projects",
@@ -74,6 +99,14 @@ VALIDATION_ISSUES = Counter(
 )
 
 _SAFE_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+_UNTRACED = frozenset({"/healthz", "/readyz", "/metrics"})
+
+
+def untraced(scope: Any) -> bool:
+    """For ``FastAPI(telemetry={"exclude": ...})``: probes and scrapes make no spans."""
+    return scope.get("path") in _UNTRACED
+
+
 _access_log = logging.getLogger("autoswe.access")
 
 SECURITY_HEADERS: tuple[tuple[bytes, bytes], ...] = (
@@ -139,25 +172,37 @@ class ObservabilityMiddleware:
                 status_holder["latency"] = time.perf_counter() - start
             await send(message)
 
+        method = scope.get("method", "GET")
+        path = str(scope.get("path", ""))
+        # FastAPI's native telemetry wraps the app in a SERVER span (W3C traceparent included);
+        # tag it so a trace can be found from the X-Request-ID a client saw.
+        span = trace.get_current_span()
+        if span.is_recording():
+            span.set_attribute("autoswe.request_id", request_id)
         try:
             await self.app(scope, receive, send_wrapper)
         finally:
             route = scope.get("route")
             template = getattr(route, "path", None) or "unmatched"
-            method = scope.get("method", "GET")
-            status = str(status_holder["status"])
-            latency = status_holder.get("latency", time.perf_counter() - start)
-            HTTP_REQUESTS.labels(method, template, status).inc()
-            HTTP_LATENCY.labels(method, template).observe(latency)
-            if template not in {"/healthz", "/readyz", "/metrics"}:
-                _access_log.info(
-                    "request",
-                    extra={
-                        "method": method,
-                        "path": scope.get("path"),
-                        "route": template,
-                        "status": int(status),
-                        "duration_ms": round(latency * 1000, 2),
-                    },
-                )
+            self._record(method, template, status_holder, start, path)
             request_id_var.reset(token)
+
+    @staticmethod
+    def _record(
+        method: str, template: str, status_holder: dict[str, Any], start: float, path: str
+    ) -> None:
+        status = str(status_holder["status"])
+        latency = status_holder.get("latency", time.perf_counter() - start)
+        HTTP_REQUESTS.labels(method, template, status).inc()
+        HTTP_LATENCY.labels(method, template).observe(latency)
+        if template not in _UNTRACED:
+            _access_log.info(
+                "request",
+                extra={
+                    "method": method,
+                    "path": path,
+                    "route": template,
+                    "status": int(status),
+                    "duration_ms": round(latency * 1000, 2),
+                },
+            )

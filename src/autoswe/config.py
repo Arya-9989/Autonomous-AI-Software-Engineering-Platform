@@ -5,16 +5,83 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from autoswe.sandbox.models import SandboxLimits
+from autoswe.stacks import Stack
+
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
+SandboxBackend = Literal["none", "docker", "local", "remote"]
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-class Settings(BaseSettings):
+class SandboxSettings(BaseSettings):
+    """Where and how generated test suites run. Shared by the API and the sandbox runner."""
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
+
+    # none: tests are not executed; remote: the sandbox runner service (deployments);
+    # docker: containers started by this process (needs Docker access = root on the host);
+    # local: a plain subprocess, NOT isolated (development only).
+    sandbox_backend: SandboxBackend = "none"
+    sandbox_image: str = "autoswe-sandbox:local"
+    sandbox_image_typescript: str = "autoswe-sandbox-node:local"
+    sandbox_image_go: str = "autoswe-sandbox-go:local"
+    sandbox_docker_binary: str = "docker"
+    # e.g. "runsc" to run every sandbox container under gVisor.
+    sandbox_docker_runtime: str | None = None
+    sandbox_pool: str = Field(default="default", pattern=r"^[a-z0-9-]{1,32}$")
+    sandbox_runner_url: str | None = None
+    sandbox_runner_token: SecretStr | None = None
+    sandbox_timeout_s: float = Field(default=120.0, ge=5, le=900)
+    sandbox_memory_mb: int = Field(default=768, ge=128, le=8192)
+    sandbox_cpus: float = Field(default=1.0, gt=0, le=8)
+    sandbox_pids_limit: int = Field(default=128, ge=16, le=4096)
+    sandbox_workspace_mb: int = Field(default=64, ge=8, le=1024)
+    sandbox_typecheck: bool = True
+    sandbox_max_concurrent_runs: int = Field(default=2, ge=1, le=16)
+    sandbox_max_repair_rounds: int = Field(default=2, ge=0, le=5)
+
+    @field_validator("sandbox_docker_runtime", "sandbox_runner_url", "sandbox_runner_token",
+                     mode="before")  # fmt: skip
+    @classmethod
+    def _blank_sandbox_value_is_unset(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @model_validator(mode="after")
+    def _check_sandbox(self) -> SandboxSettings:
+        if self.sandbox_backend == "remote":
+            token = self.sandbox_runner_token
+            if not self.sandbox_runner_url or token is None:
+                raise ValueError(
+                    "SANDBOX_BACKEND=remote needs SANDBOX_RUNNER_URL and SANDBOX_RUNNER_TOKEN."
+                )
+        token = self.sandbox_runner_token
+        if token is not None and len(token.get_secret_value()) < 16:
+            raise ValueError("SANDBOX_RUNNER_TOKEN must be at least 16 characters.")
+        return self
+
+    def sandbox_stack_images(self) -> dict[Stack, str]:
+        return {Stack.TYPESCRIPT: self.sandbox_image_typescript, Stack.GO: self.sandbox_image_go}
+
+    def sandbox_limits(self) -> SandboxLimits:
+        return SandboxLimits(
+            timeout_s=self.sandbox_timeout_s,
+            memory_mb=self.sandbox_memory_mb,
+            cpus=self.sandbox_cpus,
+            pids=self.sandbox_pids_limit,
+            workspace_mb=self.sandbox_workspace_mb,
+            typecheck=self.sandbox_typecheck,
+        )
+
+
+class Settings(SandboxSettings):
     """All settings are read from ``AUTOSWE_``-less upper-case env vars, e.g. ``DATABASE_URL``."""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
@@ -43,12 +110,21 @@ class Settings(BaseSettings):
     auth_disabled: bool = False
 
     # --- worker --------------------------------------------------------------------------------
+    # false on worker-only processes (`autoswe worker`): only health, readiness and metrics.
+    serve_api: bool = True
     worker_enabled: bool = True
+    # On shutdown, let in-flight jobs finish for up to this long before requeueing the rest.
+    worker_drain_s: float = Field(default=20.0, ge=0, le=600)
     worker_concurrency: int = Field(default=2, ge=1, le=32)
     worker_poll_interval_s: float = Field(default=1.0, gt=0)
     job_stale_after_s: float = Field(default=300.0, gt=0)
     max_active_jobs_per_owner: int = Field(default=3, ge=1)
     max_repair_rounds: int = Field(default=1, ge=0, le=3)
+    # A stage that fails with a transient provider error (rate limit, overload, timeout, 5xx,
+    # after the SDK's own retries) requeues the job this many times, resuming at that stage.
+    job_transient_retries: int = Field(default=2, ge=0, le=10)
+    # Wait before the first such retry; doubles each time (with jitter), capped at 10 minutes.
+    job_retry_delay_s: float = Field(default=30.0, ge=0, le=600)
 
     # --- generated output limits ---------------------------------------------------------------
     max_generated_files: int = Field(default=200, ge=1)
@@ -70,7 +146,36 @@ class Settings(BaseSettings):
     anthropic_max_retries: int = Field(default=2, ge=0, le=10)
     anthropic_server_fallbacks: bool = True
 
-    @field_validator("anthropic_effort", "anthropic_api_key", "static_dir", mode="before")
+    # --- token budgets and cost ------------------------------------------------------------------
+    # Tokens (input, cache included, plus output) each principal may spend per period. Empty =
+    # unlimited. TOKEN_BUDGETS overrides it per principal: "alice:2000000,ci:500000".
+    token_budget_default: int | None = Field(default=None, ge=0)
+    token_budgets: str = ""
+    token_budget_period: Literal["month", "day", "total"] = "month"  # noqa: S105 - not a secret
+    # Reserved when a job is submitted and topped up in chunks of this size while it runs, so
+    # concurrent jobs cannot all pass a check that only one of them fits under.
+    job_token_reservation: int = Field(default=200_000, ge=1_000)
+    pricing_file: Path | None = None
+
+    # --- publishing to GitHub ------------------------------------------------------------------
+    # Off unless a token is set. A fine-grained token (or GitHub App installation token) needs:
+    # Administration + Repository creation (write), Contents (write), Workflows (write, every
+    # project has a CI workflow) and Pull requests (write). Never logged or stored.
+    github_publish_token: SecretStr | None = None
+    # Organisation to create repositories in; empty = the token's own account.
+    github_publish_owner: str | None = Field(
+        default=None, pattern=r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$"
+    )
+    github_api_url: str = "https://api.github.com"
+    # Plain http is refused (the token would travel in clear) except for loopback hosts, or
+    # when this is set for a fake API on a private network.
+    github_api_insecure_http: bool = False
+    github_timeout_s: float = Field(default=30.0, gt=0, le=300)
+
+    @field_validator(
+        "anthropic_effort", "anthropic_api_key", "static_dir", "token_budget_default",
+        "pricing_file", "github_publish_token", "github_publish_owner", mode="before",
+    )  # fmt: skip
     @classmethod
     def _blank_is_unset(cls, value: object) -> object:
         # `.env.example` ships `ANTHROPIC_EFFORT=` and friends: an empty value means "not set".
@@ -93,6 +198,41 @@ class Settings(BaseSettings):
                 "(or set AUTH_DISABLED=true for local development)."
             )
         return self
+
+    @model_validator(mode="after")
+    def _check_budgets(self) -> Settings:
+        self.parsed_token_budgets()
+        return self
+
+    @model_validator(mode="after")
+    def _check_github(self) -> Settings:
+        url = urlsplit(self.github_api_url)
+        loopback = url.hostname in {"localhost", "127.0.0.1", "::1"}
+        if url.scheme == "http" and not (loopback or self.github_api_insecure_http):
+            raise ValueError(
+                "GITHUB_API_URL must use https (http is allowed for loopback hosts, or with "
+                "GITHUB_API_INSECURE_HTTP=true for a fake API on a private network)."
+            )
+        if url.scheme not in {"http", "https"} or not url.hostname:
+            raise ValueError("GITHUB_API_URL must be an absolute http(s) URL.")
+        return self
+
+    @property
+    def github_publishing_enabled(self) -> bool:
+        token = self.github_publish_token
+        return token is not None and bool(token.get_secret_value())
+
+    def parsed_token_budgets(self) -> dict[str, int]:
+        """``{principal: tokens per period}`` parsed from ``TOKEN_BUDGETS``."""
+        budgets: dict[str, int] = {}
+        for entry in filter(None, (part.strip() for part in self.token_budgets.split(","))):
+            principal, sep, amount = entry.partition(":")
+            if not sep or not principal.strip() or not amount.strip().isdecimal():
+                raise ValueError(
+                    "Each TOKEN_BUDGETS entry must look like 'principal:tokens', e.g. alice:500000"
+                )
+            budgets[principal.strip()] = int(amount.strip())
+        return budgets
 
     def parsed_api_keys(self) -> dict[str, str]:
         """Return ``{key: principal}`` parsed from ``API_KEYS``."""

@@ -1,0 +1,54 @@
+# Throw-away PostgreSQL for the kind scaling demo only (demo password, no volume).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: autoswe-db
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: autoswe-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          env:
+            - name: POSTGRES_USER
+              value: autoswe
+            - name: POSTGRES_PASSWORD
+              value: kind-demo-only
+            - name: POSTGRES_DB
+              value: autoswe
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "autoswe", "-d", "autoswe"]
+            periodSeconds: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 384Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: autoswe-db
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432

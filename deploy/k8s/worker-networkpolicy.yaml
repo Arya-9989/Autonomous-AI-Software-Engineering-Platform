@@ -1,0 +1,30 @@
+# Workers take no traffic except metrics scrapes. They reach DNS, PostgreSQL, HTTPS (the
+# Anthropic API, GitHub) and a sandbox runner on 8080 if one is deployed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: autoswe-worker
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: autoswe-worker
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - ports:
+        - port: 8000
+          protocol: TCP
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - ports:
+        - port: 5432
+          protocol: TCP
+    - ports:
+        - port: 443
+          protocol: TCP
+    - ports:
+        - port: 8080
+          protocol: TCP

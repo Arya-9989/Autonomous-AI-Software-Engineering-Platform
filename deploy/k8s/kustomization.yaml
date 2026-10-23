@@ -2,7 +2,10 @@
 #   kubectl -n autoswe create secret generic autoswe \
 #     --from-literal=DATABASE_URL='postgresql+asyncpg://user:pass@host:5432/autoswe' \
 #     --from-literal=API_KEYS='ci:<random-32-chars>' \
-#     --from-literal=ANTHROPIC_API_KEY='sk-ant-...'
+#     --from-literal=ANTHROPIC_API_KEY='sk-ant-...' \
+#     --from-literal=KEDA_POSTGRES_CONNECTION='postgresql://keda_ro:pass@host:5432/autoswe'
+# The workers are scaled by KEDA (its keda.sh CRDs must be installed). The last key is the
+# connection its PostgreSQL scaler uses: ideally a role that can only SELECT from jobs.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: autoswe
@@ -15,10 +18,13 @@ resources:
   - configmap.yaml
   - serviceaccount.yaml
   - deployment.yaml
+  - worker-deployment.yaml
+  - worker-scaledobject.yaml
   - service.yaml
   - hpa.yaml
   - pdb.yaml
   - networkpolicy.yaml
+  - worker-networkpolicy.yaml
 images:
   - name: autoswe
     newName: ghcr.io/arya-9989/autoswe

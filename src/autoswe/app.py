@@ -13,18 +13,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from autoswe import __version__
-from autoswe.api import jobs, system
+from autoswe.api import jobs, system, usage
 from autoswe.api.deps import Services
+from autoswe.budget import BudgetPolicy, TokenBudgetExceededError
 from autoswe.config import Settings, get_settings
 from autoswe.db import Database
 from autoswe.events import JobNotifier
 from autoswe.llm.registry import ProviderRegistry, build_registry
 from autoswe.logging_config import configure_logging
 from autoswe.migrations.runner import upgrade_to_head
-from autoswe.observability import ObservabilityMiddleware, content_security_policy
+from autoswe.observability import ObservabilityMiddleware, content_security_policy, untraced
 from autoswe.pipeline.orchestrator import Orchestrator
 from autoswe.pipeline.validation import Limits
+from autoswe.pricing import PricingTable
+from autoswe.sandbox.factory import build_sandbox
 from autoswe.security import ApiKeyAuthenticator
+from autoswe.tracing import configure_tracing
 from autoswe.web import html_pages, inline_script_hashes, mount_frontend
 from autoswe.worker import Worker
 
@@ -37,6 +41,8 @@ def build_services(
     db = Database(settings.database_url, echo=settings.db_echo)
     registry = registry or build_registry(settings)
     notifier = JobNotifier()
+    pricing = PricingTable.load(settings.pricing_file)
+    budget = BudgetPolicy.from_settings(settings)
     orchestrator = Orchestrator(
         db,
         registry,
@@ -47,6 +53,12 @@ def build_services(
             max_total_bytes=settings.max_total_bytes,
         ),
         max_repair_rounds=settings.max_repair_rounds,
+        sandbox=build_sandbox(settings),
+        max_test_repair_rounds=settings.sandbox_max_repair_rounds,
+        pricing=pricing,
+        budget=budget,
+        transient_retries=settings.job_transient_retries,
+        retry_delay_s=settings.job_retry_delay_s,
     )
     services = Services(
         settings=settings,
@@ -55,6 +67,8 @@ def build_services(
         notifier=notifier,
         auth=ApiKeyAuthenticator.from_settings(settings),
         worker=None,
+        budget=budget,
+        pricing=pricing,
     )
     return services, orchestrator
 
@@ -65,6 +79,7 @@ def create_app(
     """Build the ASGI app. ``registry`` lets tests inject scripted LLM providers."""
     settings = settings or get_settings()
     configure_logging(settings.log_level, settings.log_format)
+    tracer_provider = configure_tracing("autoswe")  # no-op unless OTEL_* asks for export
     services, orchestrator = build_services(settings, registry)
 
     @asynccontextmanager
@@ -80,6 +95,7 @@ def create_app(
                 concurrency=settings.worker_concurrency,
                 poll_interval_s=settings.worker_poll_interval_s,
                 stale_after_s=settings.job_stale_after_s,
+                drain_s=settings.worker_drain_s,
             )
             await worker.start()
         services.worker = worker
@@ -98,6 +114,8 @@ def create_app(
             if worker is not None:
                 await worker.stop()
             await services.db.dispose()
+            if tracer_provider is not None:
+                tracer_provider.shutdown()  # flush spans still in the batch queue
 
     app = FastAPI(
         title="Autonomous AI Software Engineering Platform",
@@ -112,6 +130,9 @@ def create_app(
         openapi_url="/api/openapi.json",
         debug=settings.debug,
         lifespan=lifespan,
+        # HTTP SERVER spans come from FastAPI itself (they continue an incoming traceparent);
+        # the per-dependency/endpoint/serialization sub-spans are left out to keep traces lean.
+        telemetry={"operation_spans": False, "exclude": untraced},
     )
     app.state.services = services
     app.state.orchestrator = orchestrator
@@ -144,6 +165,17 @@ def create_app(
             content={"detail": "Request validation failed", "errors": errors},
         )
 
+    @app.exception_handler(TokenBudgetExceededError)
+    async def budget_handler(_: Request, exc: TokenBudgetExceededError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            content={
+                "detail": str(exc),
+                "code": exc.code,
+                "budget": exc.state.as_dict() if exc.state else None,
+            },
+        )
+
     @app.exception_handler(Exception)
     async def unhandled_handler(_: Request, exc: Exception) -> JSONResponse:
         logger.exception("unhandled error", exc_info=exc)
@@ -153,7 +185,10 @@ def create_app(
         )
 
     app.include_router(system.router)
+    if not settings.serve_api:  # a worker-only process: probes and metrics, nothing else
+        return app
     app.include_router(jobs.router)
+    app.include_router(usage.router)
 
     if static_dir is not None:
         mount_frontend(app, static_dir)

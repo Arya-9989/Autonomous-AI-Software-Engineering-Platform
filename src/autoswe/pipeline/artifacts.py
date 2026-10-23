@@ -35,6 +35,11 @@ class Entity(_Model):
     name: str = Field(description="PascalCase singular entity name, e.g. 'Book'")
     description: str
     fields: list[EntityField]
+    belongs_to: list[str] = Field(
+        default_factory=list,
+        description="Entities this one references (many-to-one), e.g. a Loan belongs to "
+        "['Member', 'Book']; each becomes a required <entity>_id foreign key",
+    )
 
 
 class Requirements(_Model):
@@ -81,7 +86,7 @@ class DecisionRecord(_Model):
 class DeploymentPlan(_Model):
     container_port: int
     replicas: int
-    database: Literal["sqlite", "postgres"]
+    database: Literal["sqlite", "postgres", "memory"]
     cloud_target: str = Field(description="Where the Terraform targets, e.g. 'aws-ecs-fargate'")
     environment_variables: list[str]
 

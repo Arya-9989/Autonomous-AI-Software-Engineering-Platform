@@ -12,10 +12,14 @@ Each agent call is one streamed Messages request with:
 
 from __future__ import annotations
 
+import dataclasses
 import logging
+from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from typing import Any
 
 import anthropic
+import httpx2
 import pydantic
 from anthropic import transform_schema
 from pydantic import BaseModel
@@ -23,6 +27,7 @@ from pydantic import BaseModel
 from autoswe.config import Effort, Settings
 from autoswe.llm.base import (
     LLMConfigurationError,
+    LLMError,
     LLMOutputError,
     LLMRefusalError,
     LLMRequest,
@@ -35,9 +40,25 @@ logger = logging.getLogger(__name__)
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
+# HTTP requests made by the call in progress; the SDK retries inside one call, so this counts
+# the original request plus every retry.
+_ATTEMPTS: ContextVar[list[int] | None] = ContextVar("anthropic_http_attempts", default=None)
+
+
+async def _count_attempt(_request: httpx2.Request) -> None:
+    counter = _ATTEMPTS.get()
+    if counter is not None:
+        counter[0] += 1
+
+
+def http_event_hooks() -> dict[str, list[Callable[[httpx2.Request], Awaitable[None]]]]:
+    """Hooks for an ``httpx2.AsyncClient`` passed to the SDK, so retries are visible."""
+    return {"request": [_count_attempt]}
+
 
 class AnthropicProvider:
     name = "anthropic"
+    metered = True
 
     def __init__(
         self,
@@ -56,7 +77,10 @@ class AnthropicProvider:
         self._effort_override = effort_override
         self._server_fallbacks = server_fallbacks
         self._client = client or anthropic.AsyncAnthropic(
-            api_key=api_key, timeout=timeout_s, max_retries=max_retries
+            api_key=api_key,
+            timeout=timeout_s,
+            max_retries=max_retries,
+            http_client=anthropic.DefaultAsyncHttpxClient(event_hooks=http_event_hooks()),
         )
 
     @classmethod
@@ -95,6 +119,18 @@ class AnthropicProvider:
         return params
 
     async def generate[T: BaseModel](self, request: LLMRequest[T]) -> LLMResponse[T]:
+        counter = [0]
+        token = _ATTEMPTS.set(counter)
+        try:
+            response = await self._generate(request)
+        except LLMError as exc:
+            exc.http_attempts = counter[0] or None
+            raise
+        finally:
+            _ATTEMPTS.reset(token)
+        return dataclasses.replace(response, http_attempts=counter[0] or None)
+
+    async def _generate[T: BaseModel](self, request: LLMRequest[T]) -> LLMResponse[T]:
         params = self.build_params(request)
         try:
             async with self._client.beta.messages.stream(**params) as stream:
@@ -114,6 +150,7 @@ class AnthropicProvider:
         except anthropic.APIConnectionError as exc:  # includes timeouts
             raise LLMTransientError("Could not reach the Anthropic API") from exc
 
+        billed = _billed(message.usage, message.model)
         usage = _usage(message.usage)
         logger.info(
             "llm call finished",
@@ -149,7 +186,7 @@ class AnthropicProvider:
                 f"{request.agent} output did not match {request.output_type.__name__}: "
                 f"{exc.error_count()} validation error(s)"
             ) from exc
-        return LLMResponse(output=output, model=message.model, usage=usage)
+        return LLMResponse(output=output, model=message.model, usage=usage, billed=billed)
 
 
 # Error types (``error.type`` in an API error body) that are worth resubmitting later.
@@ -175,19 +212,36 @@ def _status_error(exc: anthropic.APIStatusError) -> LLMTransientError | LLMConfi
 
 
 def _usage(usage: Any) -> TokenUsage:
-    """Billed tokens for the call; total input = uncached + cache writes + cache reads.
+    """Billed tokens for the call; total input = uncached + cache writes + cache reads."""
+    total = TokenUsage()
+    for _, entry in _billed(usage, ""):
+        total += entry
+    return total
+
+
+def _billed(usage: Any, model: str) -> tuple[tuple[str, TokenUsage], ...]:
+    """Usage per billed attempt, with the model that served it.
 
     After a server-side fallback the top-level usage only covers the attempt that produced the
     message, while ``usage.iterations`` lists every attempt (the declined one is billed too), so
-    the iterations are summed when present.
+    the iterations are used when present.
     """
-    entries = getattr(usage, "iterations", None) or [usage]
-    input_tokens = output_tokens = 0
+    iterations = getattr(usage, "iterations", None)
+    entries = iterations or [usage]
+    billed = []
     for entry in entries:
-        input_tokens += (
-            (getattr(entry, "input_tokens", 0) or 0)
-            + (getattr(entry, "cache_read_input_tokens", 0) or 0)
-            + (getattr(entry, "cache_creation_input_tokens", 0) or 0)
+        cache_read = getattr(entry, "cache_read_input_tokens", 0) or 0
+        cache_write = getattr(entry, "cache_creation_input_tokens", 0) or 0
+        uncached = getattr(entry, "input_tokens", 0) or 0
+        billed.append(
+            (
+                (getattr(entry, "model", None) if iterations else None) or model,
+                TokenUsage(
+                    input_tokens=uncached + cache_read + cache_write,
+                    output_tokens=getattr(entry, "output_tokens", 0) or 0,
+                    cache_read_input_tokens=cache_read,
+                    cache_creation_input_tokens=cache_write,
+                ),
+            )
         )
-        output_tokens += getattr(entry, "output_tokens", 0) or 0
-    return TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens)
+    return tuple(billed)

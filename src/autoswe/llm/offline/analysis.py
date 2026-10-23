@@ -107,6 +107,20 @@ _KNOWN_FIELDS: dict[str, list[tuple[str, FieldType, bool]]] = {
     "employee": [("name", "string", True), ("email", "string", True), ("role", "string", False)],
 }
 
+# Many-to-one links the heuristics add when both entities are present ("loans" of "members").
+_KNOWN_RELATIONS: dict[str, list[str]] = {
+    "loan": ["member", "book"],
+    "comment": ["post"],
+    "ticket": ["event", "attendee"],
+    "event": ["organizer"],
+    "pet": ["owner"],
+    "order": ["customer"],
+    "invoice": ["customer"],
+    "task": ["project"],
+    "appointment": ["patient", "pet", "vet"],
+    "reservation": ["customer"],
+}
+
 _EXPLICIT_ENTITY = re.compile(r"\b([A-Z][A-Za-z0-9]+)\s*\(([^()]*)\)")
 _PROJECT_NAME = re.compile(
     r"\b(?:called|named)\s+[\"'`]?([A-Za-z][A-Za-z0-9 _-]{1,40}?)[\"'`]?"
@@ -143,7 +157,11 @@ def infer_field_type(name: str) -> FieldType:
     return "string"
 
 
-def _parse_field_list(raw: str) -> list[EntityField]:
+def _parse_field_list(
+    raw: str, entity_names: frozenset[str] = frozenset(), relations: list[str] | None = None
+) -> list[EntityField]:
+    """Fields from ``name, name:type, name?`` syntax; ``name:Entity`` (another declared entity)
+    is a relation and goes to ``relations`` instead of becoming a field."""
     fields: list[EntityField] = []
     seen: set[str] = set()
     for chunk in re.split(r",|\band\b", raw):
@@ -158,6 +176,10 @@ def _parse_field_list(raw: str) -> list[EntityField]:
             parts[-1] = singularize(parts[-1])
         name = safe_field_name("_".join(parts))
         if not name or name in seen:
+            continue
+        if type_part.strip() in entity_names and relations is not None:
+            if type_part.strip() not in relations:
+                relations.append(type_part.strip())
             continue
         explicit = type_part.strip().lower()
         aliases: dict[str, FieldType] = {
@@ -230,10 +252,17 @@ def _candidate_nouns(spec: str) -> list[str]:
 def extract_entities(spec: str) -> list[Entity]:
     entities: dict[str, Entity] = {}
 
-    for match in _EXPLICIT_ENTITY.finditer(spec):
+    matches = list(_EXPLICIT_ENTITY.finditer(spec))
+    declared = frozenset(pascal(singularize(m.group(1))) for m in matches)
+    for match in matches:
         name = pascal(singularize(match.group(1)))
-        fields = _parse_field_list(match.group(2)) or _default_fields(name.lower())
-        entities.setdefault(name, Entity(name=name, description=f"{name} records.", fields=fields))
+        relations: list[str] = []
+        fields = _parse_field_list(match.group(2), declared - {name}, relations)
+        fields = fields or _default_fields(name.lower())
+        entities.setdefault(
+            name, Entity(name=name, description=f"{name} records.", fields=fields,
+                         belongs_to=relations)
+        )  # fmt: skip
 
     if not entities:
         for noun in _candidate_nouns(spec):
@@ -254,6 +283,13 @@ def extract_entities(spec: str) -> list[Entity]:
             entities[name] = Entity(
                 name=name, description=f"{pluralize(name)} managed by the service.", fields=fields
             )
+
+    if entities and not matches:  # prose: link entities the domain knowledge relates
+        for name, entity in list(entities.items()):
+            parents = [pascal(p) for p in _KNOWN_RELATIONS.get(name.lower(), [])]
+            linked = [parent for parent in parents if parent in entities]
+            if linked:
+                entities[name] = entity.model_copy(update={"belongs_to": linked})
 
     if not entities:
         entities["Item"] = Entity(

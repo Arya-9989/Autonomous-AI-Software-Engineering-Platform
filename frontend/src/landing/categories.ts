@@ -4,12 +4,12 @@ import { sample } from "./sample";
 const GROUPS: { name: string; detail: string; match: (path: string) => boolean }[] = [
   {
     name: "Service",
-    detail: "FastAPI app, SQLAlchemy models, schemas, a router per entity",
-    match: (p) => p.startsWith("app/"),
+    detail: "FastAPI app, SQLAlchemy models, Alembic migrations, a router per entity",
+    match: (p) => p.startsWith("app/") || p.startsWith("migrations/") || p === "alembic.ini",
   },
   {
     name: "Tests",
-    detail: "pytest suite on an isolated SQLite database",
+    detail: "pytest suite on a migrated SQLite database, plus a migration check",
     match: (p) => p.startsWith("tests/"),
   },
   {

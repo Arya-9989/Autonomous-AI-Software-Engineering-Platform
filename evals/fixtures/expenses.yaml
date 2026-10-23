@@ -1,0 +1,14 @@
+name: expenses
+description: A single entity described in one sentence with typed fields.
+spec: Track expenses with description, amount:float and spent_on:date.
+expected:
+  entities: [Expense]
+  fields:
+    Expense: [description, amount, spent_on]
+  endpoints:
+    - GET /expenses
+    - POST /expenses
+    - GET /expenses/{expense_id}
+    - PATCH /expenses/{expense_id}
+    - DELETE /expenses/{expense_id}
+  min_tests: 5

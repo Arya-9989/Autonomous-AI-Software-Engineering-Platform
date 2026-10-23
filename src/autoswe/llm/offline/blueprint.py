@@ -12,6 +12,7 @@ from autoswe.pipeline.artifacts import (
     TechChoice,
 )
 from autoswe.pipeline.naming import kebab, pluralize, snake
+from autoswe.stacks import Stack
 
 
 def resource_path(entity_name: str) -> str:
@@ -22,7 +23,14 @@ def _article(noun: str) -> str:
     return "an" if noun[:1].lower() in "aeiou" else "a"
 
 
-def design(requirements: Requirements) -> ArchitectureSpec:
+def design(requirements: Requirements, stack: Stack = Stack.PYTHON) -> ArchitectureSpec:
+    endpoints = _endpoints(requirements)
+    if stack is not Stack.PYTHON:
+        return _design_in_memory(requirements, endpoints, stack)
+    return _design_python(requirements, endpoints)
+
+
+def _endpoints(requirements: Requirements) -> list[Endpoint]:
     endpoints: list[Endpoint] = [
         Endpoint(method="GET", path="/healthz", summary="Liveness probe", entity=None)
     ]
@@ -42,7 +50,10 @@ def design(requirements: Requirements) -> ArchitectureSpec:
             Endpoint(method="DELETE", path=item, summary=f"Delete {one}",
                      entity=entity.name),
         ]  # fmt: skip
+    return endpoints
 
+
+def _design_python(requirements: Requirements, endpoints: list[Endpoint]) -> ArchitectureSpec:
     return ArchitectureSpec(
         style="Modular monolith (single stateless HTTP service)",
         overview=(
@@ -125,10 +136,118 @@ def design(requirements: Requirements) -> ArchitectureSpec:
                 alternatives=["Microservice per entity", "Serverless functions"],
             ),
             DecisionRecord(
-                title="Create schema on startup",
-                decision="Call metadata.create_all() at startup instead of migrations.",
-                rationale="Keeps the scaffold minimal; adopt Alembic before schemas evolve.",
-                alternatives=["Alembic migrations from day one"],
+                title="Alembic migrations own the schema",
+                decision="Ship an initial Alembic revision and run `alembic upgrade head` before "
+                "the server starts; the app never calls metadata.create_all().",
+                rationale="Schema changes become reviewed, reversible scripts, and the tests "
+                "build their database through the same migrations they ship.",
+                alternatives=["metadata.create_all() at startup", "Hand-written SQL scripts"],
+            ),
+        ],
+    )
+
+
+_IN_MEMORY: dict[Stack, dict[str, str]] = {
+    Stack.TYPESCRIPT: {
+        "language": "TypeScript 5 on Node.js 24",
+        "why_language": "Static types with no build step: Node runs the TypeScript directly",
+        "http": "node:http with a small typed router",
+        "tests": "node:test with fetch against an ephemeral server",
+        "image": "Docker (node:24-slim, non-root)",
+    },
+    Stack.GO: {
+        "language": "Go 1.27",
+        "why_language": "One static binary, fast start-up and a strong standard library",
+        "http": "net/http ServeMux with method and path patterns",
+        "tests": "testing with net/http/httptest",
+        "image": "Docker (multi-stage, distroless static, non-root)",
+    },
+}
+
+
+def _design_in_memory(
+    requirements: Requirements, endpoints: list[Endpoint], stack: Stack
+) -> ArchitectureSpec:
+    """The same API on a dependency-free stack: no ORM, no database, state in memory."""
+    tech = _IN_MEMORY[stack]
+    return ArchitectureSpec(
+        style="Single-process HTTP service with in-memory storage",
+        overview=(
+            f"{requirements.summary} The service is written in {tech['language']} using only "
+            "its standard library. Each entity has a typed model, input validation and CRUD "
+            "handlers; data is held in memory, so it runs as one replica until a database "
+            "replaces the store."
+        ),
+        components=[
+            Component(
+                name="HTTP API",
+                responsibility="Routing, request validation and JSON serialisation",
+                technology=tech["http"],
+                depends_on=["Store"],
+            ),
+            Component(
+                name="Store",
+                responsibility="Thread-safe in-memory storage per entity",
+                technology="Standard library collections",
+                depends_on=[],
+            ),
+            Component(
+                name="Delivery pipeline",
+                responsibility="Lint, type check, test, build and publish the image",
+                technology="GitHub Actions + Docker",
+                depends_on=["HTTP API"],
+            ),
+        ],
+        entities=requirements.entities,
+        endpoints=endpoints,
+        tech_stack=[
+            TechChoice(layer="Language", choice=tech["language"], rationale=tech["why_language"]),
+            TechChoice(
+                layer="HTTP",
+                choice=tech["http"],
+                rationale="No third-party runtime dependencies to audit or update",
+            ),
+            TechChoice(
+                layer="Tests",
+                choice=tech["tests"],
+                rationale="Exercises the real HTTP surface, in process",
+            ),
+            TechChoice(
+                layer="Packaging",
+                choice=tech["image"],
+                rationale="Reproducible runtime with a small attack surface",
+            ),
+            TechChoice(
+                layer="Orchestration",
+                choice="Kubernetes Deployment + Service",
+                rationale="Rolling updates and probes",
+            ),
+            TechChoice(
+                layer="Infrastructure as code",
+                choice="Terraform (AWS ECS Fargate)",
+                rationale="Declarative, reviewable infrastructure changes",
+            ),
+        ],
+        deployment=DeploymentPlan(
+            container_port=8000,
+            replicas=1,
+            database="memory",
+            cloud_target="aws-ecs-fargate",
+            environment_variables=["PORT"],
+        ),
+        decisions=[
+            DecisionRecord(
+                title="Standard library only",
+                decision="Use no third-party runtime dependencies.",
+                rationale="Nothing to install or patch at run time; the scaffold stays small.",
+                alternatives=["A web framework (Express, Fastify, chi, gin)"],
+            ),
+            DecisionRecord(
+                title="In-memory storage",
+                decision="Keep data in memory behind a small store interface.",
+                rationale="No database to provision for the first version; the store is the "
+                "seam where a database goes next, and until then it runs as one replica.",
+                alternatives=["PostgreSQL from day one", "SQLite"],
             ),
         ],
     )

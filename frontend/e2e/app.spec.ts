@@ -51,7 +51,7 @@ test.describe("studio", () => {
     await expect(page.getByText("Validation passed; review score 100/100").first()).toBeVisible();
 
     // Files: the tree and a highlighted file.
-    await expect(page.getByText("32 files", { exact: true })).toBeVisible();
+    await expect(page.getByText("37 files", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Dockerfile" }).click();
     await expect(page.getByRole("region", { name: "Contents of Dockerfile" })).toContainText("HEALTHCHECK");
 

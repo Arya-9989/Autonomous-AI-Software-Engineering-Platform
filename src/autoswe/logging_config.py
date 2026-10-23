@@ -13,6 +13,8 @@ from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
+from opentelemetry import trace
+
 request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
 job_id_var: ContextVar[str | None] = ContextVar("job_id", default=None)
 
@@ -23,6 +25,9 @@ class ContextFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         record.request_id = request_id_var.get()
         record.job_id = job_id_var.get()
+        context = trace.get_current_span().get_span_context()
+        record.trace_id = f"{context.trace_id:032x}" if context.is_valid else None
+        record.span_id = f"{context.span_id:016x}" if context.is_valid else None
         return True
 
 

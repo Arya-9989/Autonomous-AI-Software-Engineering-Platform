@@ -1,0 +1,21 @@
+name: library
+description: Domain nouns in prose, no field syntax; three entities and their CRUD routes.
+spec: >-
+  A REST API for a small library where members borrow books and librarians track loans with
+  due dates.
+expected:
+  entities: [Member, Book, Loan]
+  fields:
+    Loan: [due_date]
+  relations:
+    - Loan -> Member
+    - Loan -> Book
+  endpoints:
+    - GET /books
+    - POST /books
+    - GET /books/{book_id}
+    - GET /members/{member_id}
+    - POST /loans
+    - GET /loans
+    - PATCH /loans/{loan_id}
+  min_tests: 10

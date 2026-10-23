@@ -12,6 +12,10 @@ dependencies = [
     "anthropic>=1.0,<2",
     "asyncpg>=0.30",
     "fastapi>=0.115",
+    "httpx2>=2.16",
+    "opentelemetry-api>=1.45",
+    "opentelemetry-exporter-otlp-proto-http>=1.45",
+    "opentelemetry-sdk>=1.45",
     "prometheus-client>=0.21",
     "pydantic>=2.10",
     "pydantic-settings>=2.7",
@@ -28,8 +32,10 @@ autoswe = "autoswe.__main__:main"
 dev = [
     "httpx>=0.28",
     "mypy>=1.15",
+    "psycopg[binary]>=3.2",
     "pytest>=8.3",
     "pytest-asyncio>=0.25",
+    "pytest-cov>=6.0",
     "ruff>=0.9",
     "types-pyyaml>=6.0",
 ]
@@ -84,5 +90,21 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-ra --strict-markers"
-markers = ["slow: runs the generated project's own test-suite in a subprocess"]
+markers = [
+    "slow: runs the generated project's own test-suite in a subprocess",
+    "docker: runs real sandbox containers (needs Docker and the autoswe-sandbox image)",
+]
 filterwarnings = ["error::DeprecationWarning:autoswe.*"]
+
+[tool.coverage.run]
+source = ["autoswe"]
+# SQLAlchemy's asyncio layer runs database calls in greenlets; without this, code after an
+# awaited query is not seen and is reported as uncovered.
+concurrency = ["thread", "greenlet"]
+
+[tool.coverage.report]
+# main measured 95.17% with greenlet tracking (92.8% without it, which missed code after
+# awaited queries); this branch measures 95.9%. The gate sits above main's level.
+fail_under = 95.5
+show_missing = true
+skip_covered = true

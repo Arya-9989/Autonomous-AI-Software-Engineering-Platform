@@ -14,6 +14,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from autoswe.llm.base import LLMOutputError, LLMRequest, LLMResponse, TokenUsage
+from autoswe.llm.offline import templates_go, templates_typescript
 from autoswe.llm.offline.analysis import analyze
 from autoswe.llm.offline.blueprint import design
 from autoswe.llm.offline.templates_app import render_project
@@ -27,6 +28,14 @@ from autoswe.pipeline.artifacts import (
     ReviewReport,
     ValidationReport,
 )
+from autoswe.sandbox.models import SandboxResult, SandboxStatus
+from autoswe.stacks import Stack
+
+_RENDERERS = {
+    Stack.PYTHON: render_project,
+    Stack.TYPESCRIPT: templates_typescript.render_project,
+    Stack.GO: templates_go.render_project,
+}
 
 
 def _review(context: dict[str, Any]) -> ReviewReport:
@@ -41,14 +50,30 @@ def _review(context: dict[str, Any]) -> ReviewReport:
         )
         for issue in validation.issues
     ]  # fmt: skip
-    findings.append(
-        ReviewFinding(
-            severity="info",
-            file="app/main.py",
-            message="Tables are created with metadata.create_all() at startup.",
-            suggestion="Introduce Alembic migrations before the first schema change in production.",
+    linked = [e for e in requirements.entities if e.belongs_to]
+    if linked:
+        pairs = ", ".join(f"{p} -> {e.name}" for e in linked for p in e.belongs_to)
+        findings.append(
+            ReviewFinding(
+                severity="info",
+                file=None,
+                message=f"Deleting a parent deletes its children ({pairs}): the foreign keys "
+                "cascade.",
+                suggestion="Switch a relation to RESTRICT (or a soft delete) where its children "
+                "must outlive the parent, such as records kept for audit.",
+            )
         )
-    )
+    if context.get("stack", Stack.PYTHON) != Stack.PYTHON:
+        findings.append(
+            ReviewFinding(
+                severity="info",
+                file=None,
+                message="Data is kept in memory: it is lost on restart and not shared between "
+                "replicas.",
+                suggestion="Put a database behind the store module before running more than "
+                "one replica.",
+            )
+        )
     if any("Authentication" in item for item in requirements.out_of_scope):
         findings.append(
             ReviewFinding(
@@ -58,21 +83,55 @@ def _review(context: dict[str, Any]) -> ReviewReport:
                 suggestion="Add OAuth2 or an authenticating gateway before exposing it publicly.",
             )
         )
-    score = max(0, 100 - 15 * errors - 3 * warnings)
+    penalty, tested = _test_findings(context.get("tests"), findings)
+    score = max(0, 100 - 15 * errors - 3 * warnings - penalty)
     verdict = "passes all structural checks" if errors == 0 else f"has {errors} blocking issue(s)"
     return ReviewReport(
         summary=(
             f"Deterministic review of {validation.files_checked} files: the project {verdict} "
-            f"with {warnings} warning(s). Offline reviews do not judge business logic."
+            f"with {warnings} warning(s).{tested} Offline reviews do not judge business logic."
         ),
         score=score,
         findings=findings,
     )
 
 
+def _test_findings(raw: object, findings: list[ReviewFinding]) -> tuple[int, str]:
+    """Fold the sandbox result into the review: (score penalty, summary sentence)."""
+    if not isinstance(raw, dict):
+        return 0, ""  # tests were not executed (no sandbox configured)
+    result = SandboxResult.model_validate(raw)
+    if result.status is SandboxStatus.ERROR:
+        findings.append(
+            ReviewFinding(severity="info", file=None,
+                          message=f"The test suite could not be executed: {result.message}",
+                          suggestion="Check the sandbox runner; this says nothing about the code.")
+        )  # fmt: skip
+        return 0, " Its tests could not be executed."
+    penalty = 0
+    for name, check in (("ruff", result.lint), ("mypy", result.typecheck)):
+        if check is not None and check.status == "failed":
+            penalty += 3
+            findings.append(
+                ReviewFinding(severity="warning", file=None,
+                              message=f"{name} reported {check.issue_count} issue(s).",
+                              suggestion="; ".join(check.issues[:3]))
+            )  # fmt: skip
+    tests = result.tests
+    if result.status is SandboxStatus.PASSED and tests is not None:
+        return penalty, f" All {tests.passed} generated tests pass in the sandbox."
+    findings.append(
+        ReviewFinding(severity="error", file=None,
+                      message=f"The generated test suite does not pass: {result.describe()}.",
+                      suggestion="Fix the failing tests listed in the sandbox report.")
+    )  # fmt: skip
+    return penalty + 25, " Its generated tests do not pass in the sandbox."
+
+
 class OfflineProvider:
     name = "offline"
     model = "offline-templates-v1"
+    metered = False  # no model is called: nothing to bill or budget
 
     def __init__(self, delay_s: float = 0.0) -> None:
         # Optional pacing for demos (OFFLINE_DELAY_S); the answer itself does not change.
@@ -82,17 +141,18 @@ class OfflineProvider:
         if self.delay_s > 0:
             await asyncio.sleep(self.delay_s)
         context = dict(request.context)
+        stack = Stack(context.get("stack", Stack.PYTHON))
         result: BaseModel
         match request.agent:
             case "analyst":
                 result = analyze(str(context["spec"]))
             case "architect":
-                result = design(Requirements.model_validate(context["requirements"]))
+                result = design(Requirements.model_validate(context["requirements"]), stack)
             case "coder":
                 requirements = Requirements.model_validate(context["requirements"])
                 architecture = ArchitectureSpec.model_validate(context["architecture"])
                 result = FileBundle(
-                    files=render_project(
+                    files=_RENDERERS[stack](
                         requirements.project_name, requirements.summary, architecture
                     ),
                     notes="Rendered from offline templates.",
@@ -104,7 +164,9 @@ class OfflineProvider:
             case "devops":
                 requirements = Requirements.model_validate(context["requirements"])
                 architecture = ArchitectureSpec.model_validate(context["architecture"])
-                result = FileBundle(files=render_devops(requirements.project_name, architecture))
+                result = FileBundle(
+                    files=render_devops(requirements.project_name, architecture, stack)
+                )
             case "reviewer":
                 result = _review(context)
             case other:

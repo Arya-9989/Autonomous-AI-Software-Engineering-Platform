@@ -1,0 +1,369 @@
+{
+ "format_version": 1,
+ "fixture": "expenses-go",
+ "source": "offline-provider",
+ "provenance": "Synthesized by AutoSWE's deterministic offline provider (heuristics and templates). This is NOT output from Claude or any other model; it exercises the harness and pins the offline pipeline's behaviour. Re-record with --source anthropic for model output.",
+ "model": "offline-templates-v1",
+ "recorded_at": "2026-10-23T00:43:23Z",
+ "autoswe_version": "0.1.0",
+ "sandbox": "docker",
+ "calls": [
+  {
+   "agent": "analyst",
+   "request_sha256": "da2dd7bff2c60cc52c24518686afcb71488302033f5b20df5cb7620912abda9a",
+   "model": "offline-templates-v1",
+   "usage": {},
+   "output": {
+    "project_name": "expenses-service",
+    "summary": "Track expenses with description, amount:float and spent_on:date.",
+    "user_stories": [
+     "As an API client, I can manage expenses (create, list, view, update, delete)."
+    ],
+    "functional_requirements": [
+     "Track expenses with description, amount:float and spent_on:date.",
+     "Expose create, read, update, delete and paginated list operations for expenses."
+    ],
+    "non_functional_requirements": [
+     "Ship as a non-root container image with a health check.",
+     "Every change runs lint, tests and an image build in CI.",
+     "Configuration comes from environment variables (12-factor)."
+    ],
+    "entities": [
+     {
+      "name": "Expense",
+      "description": "Expenses managed by the service.",
+      "fields": [
+       {
+        "name": "description",
+        "type": "text",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "amount",
+        "type": "float",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "spent_on",
+        "type": "date",
+        "required": true,
+        "description": ""
+       }
+      ],
+      "belongs_to": []
+     }
+    ],
+    "assumptions": [
+     "Single-tenant HTTP JSON API.",
+     "SQLite for local development, PostgreSQL in production via DATABASE_URL."
+    ],
+    "out_of_scope": [
+     "Authentication and authorisation (not requested).",
+     "A graphical frontend; the deliverable is an HTTP API."
+    ]
+   }
+  },
+  {
+   "agent": "architect",
+   "request_sha256": "aaef700421fc2b0f163979ea4aceda60a3244cc7094cdfb51218c6c14dab35df",
+   "model": "offline-templates-v1",
+   "usage": {},
+   "output": {
+    "style": "Single-process HTTP service with in-memory storage",
+    "overview": "Track expenses with description, amount:float and spent_on:date. The service is written in Go 1.27 using only its standard library. Each entity has a typed model, input validation and CRUD handlers; data is held in memory, so it runs as one replica until a database replaces the store.",
+    "components": [
+     {
+      "name": "HTTP API",
+      "responsibility": "Routing, request validation and JSON serialisation",
+      "technology": "net/http ServeMux with method and path patterns",
+      "depends_on": [
+       "Store"
+      ]
+     },
+     {
+      "name": "Store",
+      "responsibility": "Thread-safe in-memory storage per entity",
+      "technology": "Standard library collections",
+      "depends_on": []
+     },
+     {
+      "name": "Delivery pipeline",
+      "responsibility": "Lint, type check, test, build and publish the image",
+      "technology": "GitHub Actions + Docker",
+      "depends_on": [
+       "HTTP API"
+      ]
+     }
+    ],
+    "entities": [
+     {
+      "name": "Expense",
+      "description": "Expenses managed by the service.",
+      "fields": [
+       {
+        "name": "description",
+        "type": "text",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "amount",
+        "type": "float",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "spent_on",
+        "type": "date",
+        "required": true,
+        "description": ""
+       }
+      ],
+      "belongs_to": []
+     }
+    ],
+    "endpoints": [
+     {
+      "method": "GET",
+      "path": "/healthz",
+      "summary": "Liveness probe",
+      "entity": null
+     },
+     {
+      "method": "GET",
+      "path": "/expenses",
+      "summary": "List expenses",
+      "entity": "Expense"
+     },
+     {
+      "method": "POST",
+      "path": "/expenses",
+      "summary": "Create an expense",
+      "entity": "Expense"
+     },
+     {
+      "method": "GET",
+      "path": "/expenses/{expense_id}",
+      "summary": "Get one expense",
+      "entity": "Expense"
+     },
+     {
+      "method": "PATCH",
+      "path": "/expenses/{expense_id}",
+      "summary": "Update an expense",
+      "entity": "Expense"
+     },
+     {
+      "method": "DELETE",
+      "path": "/expenses/{expense_id}",
+      "summary": "Delete an expense",
+      "entity": "Expense"
+     }
+    ],
+    "tech_stack": [
+     {
+      "layer": "Language",
+      "choice": "Go 1.27",
+      "rationale": "One static binary, fast start-up and a strong standard library"
+     },
+     {
+      "layer": "HTTP",
+      "choice": "net/http ServeMux with method and path patterns",
+      "rationale": "No third-party runtime dependencies to audit or update"
+     },
+     {
+      "layer": "Tests",
+      "choice": "testing with net/http/httptest",
+      "rationale": "Exercises the real HTTP surface, in process"
+     },
+     {
+      "layer": "Packaging",
+      "choice": "Docker (multi-stage, distroless static, non-root)",
+      "rationale": "Reproducible runtime with a small attack surface"
+     },
+     {
+      "layer": "Orchestration",
+      "choice": "Kubernetes Deployment + Service",
+      "rationale": "Rolling updates and probes"
+     },
+     {
+      "layer": "Infrastructure as code",
+      "choice": "Terraform (AWS ECS Fargate)",
+      "rationale": "Declarative, reviewable infrastructure changes"
+     }
+    ],
+    "deployment": {
+     "container_port": 8000,
+     "replicas": 1,
+     "database": "memory",
+     "cloud_target": "aws-ecs-fargate",
+     "environment_variables": [
+      "PORT"
+     ]
+    },
+    "decisions": [
+     {
+      "title": "Standard library only",
+      "decision": "Use no third-party runtime dependencies.",
+      "rationale": "Nothing to install or patch at run time; the scaffold stays small.",
+      "alternatives": [
+       "A web framework (Express, Fastify, chi, gin)"
+      ]
+     },
+     {
+      "title": "In-memory storage",
+      "decision": "Keep data in memory behind a small store interface.",
+      "rationale": "No database to provision for the first version; the store is the seam where a database goes next, and until then it runs as one replica.",
+      "alternatives": [
+       "PostgreSQL from day one",
+       "SQLite"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "agent": "coder",
+   "request_sha256": "7222fdd943130d035f44331365f45ca9a1d98e3cf8315f65d0e9c4c2c04bbab8",
+   "model": "offline-templates-v1",
+   "usage": {},
+   "output": {
+    "files": [
+     {
+      "path": "go.mod",
+      "content": "module expenses-service\n\ngo 1.27\n",
+      "description": "Module definition (no dependencies)"
+     },
+     {
+      "path": "README.md",
+      "content": "# expenses-service\n\nTrack expenses with description, amount:float and spent_on:date.\n\n> Generated by the Autonomous AI Software Engineering Platform (offline provider).\n> Review the code before deploying it anywhere that matters.\n\nGo 1.27 with the standard library only. Data is kept in memory, so run one\nreplica until a database replaces `store.go`. A record that belongs to another (a\n`<parent>_id` field) must point at one that exists, lists can be filtered by it, and\ndeleting the parent deletes its children.\n\n## Run and test\n\n```bash\ngo run .             # http://localhost:8000\ngofmt -l . && go vet ./... && go test ./...\n```\n\n## API\n\n| Method | Path | Description |\n| --- | --- | --- |\n| `GET` | `/healthz` | Liveness probe |\n| `GET` | `/expenses` | List expenses |\n| `POST` | `/expenses` | Create an expense |\n| `GET` | `/expenses/{expense_id}` | Get one expense |\n| `PATCH` | `/expenses/{expense_id}` | Update an expense |\n| `DELETE` | `/expenses/{expense_id}` | Delete an expense |\n",
+      "description": "How to run, test and deploy the service"
+     },
+     {
+      "path": "main.go",
+      "content": "package main\n\nimport (\n\t\"flag\"\n\t\"log\"\n\t\"net/http\"\n\t\"os\"\n\t\"time\"\n)\n\nfunc main() {\n\thealthcheck := flag.Bool(\"healthcheck\", false, \"probe /healthz on the local server and exit\")\n\tflag.Parse()\n\tport := os.Getenv(\"PORT\")\n\tif port == \"\" {\n\t\tport = \"8000\"\n\t}\n\tif *healthcheck {\n\t\tos.Exit(probe(\"http://127.0.0.1:\" + port + \"/healthz\"))\n\t}\n\tserver := &http.Server{Addr: \":\" + port, Handler: newServer(), ReadHeaderTimeout: 10 * time.Second}\n\tlog.Printf(\"listening on :%s\", port)\n\tlog.Fatal(server.ListenAndServe())\n}\n\n// probe is the container health check: exit status 0 when /healthz answers 200.\nfunc probe(url string) int {\n\tclient := http.Client{Timeout: 2 * time.Second}\n\tresponse, err := client.Get(url)\n\tif err != nil {\n\t\treturn 1\n\t}\n\tdefer response.Body.Close()\n\tif response.StatusCode != http.StatusOK {\n\t\treturn 1\n\t}\n\treturn 0\n}\n",
+      "description": "Process entry point and container health check"
+     },
+     {
+      "path": "handlers.go",
+      "content": "package main\n\nimport (\n\t\"encoding/json\"\n\t\"errors\"\n\t\"fmt\"\n\t\"net/http\"\n\t\"strconv\"\n)\n\nconst maxBodyBytes = 1 << 20\n\ntype resource struct {\n\tlabel      string\n\tfields     []FieldSpec\n\tstore      *Store\n\treferences []reference\n}\n\n// reference is a many-to-one link: key holds the id of an item in the parent's store.\ntype reference struct {\n\tkey   string\n\tlabel string\n\tstore *Store\n}\n\n// newResource builds one entity's handlers; deleting a parent deletes what references it.\nfunc newResource(label string, fields []FieldSpec, references ...reference) *resource {\n\tres := &resource{label: label, fields: fields, store: NewStore(), references: references}\n\tfor _, ref := range references {\n\t\tref.store.CascadeTo(ref.key, res.store)\n\t}\n\treturn res\n}\n\n// newServer wires every route: CRUD for each entity, plus GET /healthz.\nfunc newServer() http.Handler {\n\tmux := http.NewServeMux()\n\tmux.HandleFunc(\"GET /healthz\", func(w http.ResponseWriter, _ *http.Request) {\n\t\twriteJSON(w, http.StatusOK, map[string]string{\"status\": \"ok\"})\n\t})\n\n\texpenses := newResource(\"Expense\", expenseFields)\n\tmux.HandleFunc(\"GET /expenses\", expenses.list)\n\tmux.HandleFunc(\"POST /expenses\", expenses.create)\n\tmux.HandleFunc(\"GET /expenses/{id}\", expenses.get)\n\tmux.HandleFunc(\"PATCH /expenses/{id}\", expenses.update)\n\tmux.HandleFunc(\"DELETE /expenses/{id}\", expenses.delete)\n\treturn mux\n}\n\nfunc writeJSON(w http.ResponseWriter, status int, body any) {\n\tw.Header().Set(\"Content-Type\", \"application/json\")\n\tw.WriteHeader(status)\n\t_ = json.NewEncoder(w).Encode(body)\n}\n\nfunc detail(w http.ResponseWriter, status int, message any) {\n\twriteJSON(w, status, map[string]any{\"detail\": message})\n}\n\nfunc readBody(w http.ResponseWriter, r *http.Request) (map[string]any, bool) {\n\tvar body map[string]any\n\terr := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes)).Decode(&body)\n\tvar tooLarge *http.MaxBytesError\n\tswitch {\n\tcase errors.As(err, &tooLarge):\n\t\tdetail(w, http.StatusRequestEntityTooLarge, \"Body too large\")\n\t\treturn nil, false\n\tcase err != nil || body == nil:\n\t\tdetail(w, http.StatusUnprocessableEntity, \"Body must be a JSON object\")\n\t\treturn nil, false\n\t}\n\treturn body, true\n}\n\nfunc intParam(r *http.Request, name string, fallback int) (int, bool) {\n\traw := r.URL.Query().Get(name)\n\tif raw == \"\" {\n\t\treturn fallback, true\n\t}\n\tvalue, err := strconv.Atoi(raw)\n\treturn value, err == nil\n}\n\nfunc (res *resource) id(w http.ResponseWriter, r *http.Request) (int64, bool) {\n\tid, err := strconv.ParseInt(r.PathValue(\"id\"), 10, 64)\n\tif err != nil || id < 1 {\n\t\tdetail(w, http.StatusNotFound, res.label+\" not found\")\n\t\treturn 0, false\n\t}\n\treturn id, true\n}\n\nfunc (res *resource) list(w http.ResponseWriter, r *http.Request) {\n\tlimit, okLimit := intParam(r, \"limit\", 50)\n\toffset, okOffset := intParam(r, \"offset\", 0)\n\tif !okLimit || !okOffset || limit < 1 || limit > 200 || offset < 0 {\n\t\tdetail(w, http.StatusUnprocessableEntity, []string{\"limit or offset out of range\"})\n\t\treturn\n\t}\n\twhere := make(map[string]int64, len(res.references))\n\tfor _, ref := range res.references {\n\t\traw := r.URL.Query().Get(ref.key)\n\t\tif raw == \"\" {\n\t\t\tcontinue\n\t\t}\n\t\tid, err := strconv.ParseInt(raw, 10, 64)\n\t\tif err != nil || id < 1 {\n\t\t\tdetail(w, http.StatusUnprocessableEntity, []string{ref.key + \": expected a positive integer\"})\n\t\t\treturn\n\t\t}\n\t\twhere[ref.key] = id\n\t}\n\twriteJSON(w, http.StatusOK, res.store.List(limit, offset, where))\n}\n\n// missingParent names the first referenced parent that does not exist.\nfunc (res *resource) missingParent(data map[string]any) (string, bool) {\n\tfor _, ref := range res.references {\n\t\tnumber, ok := data[ref.key].(float64)\n\t\tif !ok {\n\t\t\tcontinue\n\t\t}\n\t\tif _, found := ref.store.Get(int64(number)); !found {\n\t\t\treturn fmt.Sprintf(\"%s %d not found\", ref.label, int64(number)), true\n\t\t}\n\t}\n\treturn \"\", false\n}\n\nfunc (res *resource) create(w http.ResponseWriter, r *http.Request) {\n\tbody, ok := readBody(w, r)\n\tif !ok {\n\t\treturn\n\t}\n\tdata, problems := validate(res.fields, body, false)\n\tif len(problems) > 0 {\n\t\tdetail(w, http.StatusUnprocessableEntity, problems)\n\t\treturn\n\t}\n\tif message, missing := res.missingParent(data); missing {\n\t\tdetail(w, http.StatusUnprocessableEntity, message)\n\t\treturn\n\t}\n\twriteJSON(w, http.StatusCreated, res.store.Create(data))\n}\n\nfunc (res *resource) get(w http.ResponseWriter, r *http.Request) {\n\tid, ok := res.id(w, r)\n\tif !ok {\n\t\treturn\n\t}\n\titem, found := res.store.Get(id)\n\tif !found {\n\t\tdetail(w, http.StatusNotFound, res.label+\" not found\")\n\t\treturn\n\t}\n\twriteJSON(w, http.StatusOK, item)\n}\n\nfunc (res *resource) update(w http.ResponseWriter, r *http.Request) {\n\tid, ok := res.id(w, r)\n\tif !ok {\n\t\treturn\n\t}\n\tbody, ok := readBody(w, r)\n\tif !ok {\n\t\treturn\n\t}\n\tdata, problems := validate(res.fields, body, true)\n\tif len(problems) > 0 {\n\t\tdetail(w, http.StatusUnprocessableEntity, problems)\n\t\treturn\n\t}\n\tif _, found := res.store.Get(id); !found {\n\t\tdetail(w, http.StatusNotFound, res.label+\" not found\")\n\t\treturn\n\t}\n\tif message, missing := res.missingParent(data); missing {\n\t\tdetail(w, http.StatusUnprocessableEntity, message)\n\t\treturn\n\t}\n\titem, found := res.store.Update(id, data)\n\tif !found {\n\t\tdetail(w, http.StatusNotFound, res.label+\" not found\")\n\t\treturn\n\t}\n\twriteJSON(w, http.StatusOK, item)\n}\n\nfunc (res *resource) delete(w http.ResponseWriter, r *http.Request) {\n\tid, ok := res.id(w, r)\n\tif !ok {\n\t\treturn\n\t}\n\tif !res.store.Delete(id) {\n\t\tdetail(w, http.StatusNotFound, res.label+\" not found\")\n\t\treturn\n\t}\n\tw.WriteHeader(http.StatusNoContent)\n}\n",
+      "description": "HTTP routing and CRUD handlers"
+     },
+     {
+      "path": "models.go",
+      "content": "package main\n\n// Expense is the JSON shape of one expense.\ntype Expense struct {\n\tID          int64   `json:\"id\"`\n\tDescription string  `json:\"description\"`\n\tAmount      float64 `json:\"amount\"`\n\tSpentOn     string  `json:\"spent_on\"`\n\tCreatedAt   string  `json:\"created_at\"`\n}\n\nvar expenseFields = []FieldSpec{\n\t{Name: \"description\", Type: TypeText, Required: true},\n\t{Name: \"amount\", Type: TypeFloat, Required: true},\n\t{Name: \"spent_on\", Type: TypeDate, Required: true},\n}\n",
+      "description": "Entity types and field lists"
+     },
+     {
+      "path": "validation.go",
+      "content": "package main\n\nimport (\n\t\"fmt\"\n\t\"math\"\n\t\"sort\"\n\t\"time\"\n)\n\n// FieldType is the JSON type a field accepts.\ntype FieldType string\n\n// The field types an entity can use.\nconst (\n\tTypeString   FieldType = \"string\"\n\tTypeText     FieldType = \"text\"\n\tTypeInteger  FieldType = \"integer\"\n\tTypeFloat    FieldType = \"float\"\n\tTypeBoolean  FieldType = \"boolean\"\n\tTypeDate     FieldType = \"date\"\n\tTypeDateTime FieldType = \"datetime\"\n)\n\n// FieldSpec describes one field of an entity.\ntype FieldSpec struct {\n\tName     string\n\tType     FieldType\n\tRequired bool\n}\n\nfunc accepts(kind FieldType, value any) bool {\n\tswitch kind {\n\tcase TypeString:\n\t\ttext, ok := value.(string)\n\t\treturn ok && len(text) <= 255\n\tcase TypeText:\n\t\t_, ok := value.(string)\n\t\treturn ok\n\tcase TypeInteger:\n\t\tnumber, ok := value.(float64)\n\t\treturn ok && number == math.Trunc(number) && math.Abs(number) < 1<<53\n\tcase TypeFloat:\n\t\tnumber, ok := value.(float64)\n\t\treturn ok && !math.IsInf(number, 0) && !math.IsNaN(number)\n\tcase TypeBoolean:\n\t\t_, ok := value.(bool)\n\t\treturn ok\n\tcase TypeDate:\n\t\ttext, ok := value.(string)\n\t\tif !ok {\n\t\t\treturn false\n\t\t}\n\t\t_, err := time.Parse(time.DateOnly, text)\n\t\treturn err == nil\n\tcase TypeDateTime:\n\t\ttext, ok := value.(string)\n\t\tif !ok {\n\t\t\treturn false\n\t\t}\n\t\t_, err := time.Parse(time.RFC3339, text)\n\t\treturn err == nil\n\t}\n\treturn false\n}\n\n// validate checks a decoded JSON object; partial (PATCH) allows any subset of fields.\nfunc validate(fields []FieldSpec, body map[string]any, partial bool) (map[string]any, []string) {\n\tknown := make(map[string]FieldSpec, len(fields))\n\tfor _, field := range fields {\n\t\tknown[field.Name] = field\n\t}\n\tvar problems []string\n\tfor key := range body {\n\t\tif _, ok := known[key]; !ok {\n\t\t\tproblems = append(problems, key+\": unknown field\")\n\t\t}\n\t}\n\tdata := make(map[string]any, len(fields))\n\tfor _, field := range fields {\n\t\tvalue, present := body[field.Name]\n\t\tswitch {\n\t\tcase !present:\n\t\t\tif field.Required && !partial {\n\t\t\t\tproblems = append(problems, field.Name+\": required\")\n\t\t\t}\n\t\tcase value == nil && !field.Required:\n\t\t\tdata[field.Name] = nil\n\t\tcase accepts(field.Type, value):\n\t\t\tdata[field.Name] = value\n\t\tdefault:\n\t\t\tproblems = append(problems, fmt.Sprintf(\"%s: expected %s\", field.Name, field.Type))\n\t\t}\n\t}\n\tsort.Strings(problems)\n\treturn data, problems\n}\n",
+      "description": "Field-driven input validation"
+     },
+     {
+      "path": "store.go",
+      "content": "package main\n\nimport (\n\t\"sort\"\n\t\"sync\"\n\t\"time\"\n)\n\n// Item is one stored entity as a JSON object.\ntype Item map[string]any\n\n// Store keeps one entity's items in memory. Replace it with a database before scaling out.\ntype Store struct {\n\tmu         sync.Mutex\n\titems      map[int64]Item\n\tnext       int64\n\tdependents []dependent\n}\n\n// dependent is a store whose items point at this one's through key.\ntype dependent struct {\n\tkey   string\n\tstore *Store\n}\n\n// NewStore returns an empty store.\nfunc NewStore() *Store {\n\treturn &Store{items: make(map[int64]Item), next: 1}\n}\n\n// CascadeTo makes deleting an item here delete the child items whose key holds its id.\nfunc (s *Store) CascadeTo(key string, child *Store) {\n\ts.mu.Lock()\n\tdefer s.mu.Unlock()\n\ts.dependents = append(s.dependents, dependent{key: key, store: child})\n}\n\n// refersTo reports whether a decoded JSON value is the given id.\nfunc refersTo(value any, id int64) bool {\n\tnumber, ok := value.(float64)\n\treturn ok && number == float64(id)\n}\n\nfunc matches(item Item, where map[string]int64) bool {\n\tfor key, id := range where {\n\t\tif !refersTo(item[key], id) {\n\t\t\treturn false\n\t\t}\n\t}\n\treturn true\n}\n\n// List returns up to limit items whose where keys match, oldest first, after skipping offset.\nfunc (s *Store) List(limit, offset int, where map[string]int64) []Item {\n\ts.mu.Lock()\n\tdefer s.mu.Unlock()\n\tids := make([]int64, 0, len(s.items))\n\tfor id := range s.items {\n\t\tids = append(ids, id)\n\t}\n\tsort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })\n\tpage := make([]Item, 0, limit)\n\tskipped := 0\n\tfor _, id := range ids {\n\t\titem := s.items[id]\n\t\tswitch {\n\t\tcase len(page) == limit:\n\t\t\treturn page\n\t\tcase !matches(item, where):\n\t\tcase skipped < offset:\n\t\t\tskipped++\n\t\tdefault:\n\t\t\tpage = append(page, item)\n\t\t}\n\t}\n\treturn page\n}\n\n// Get returns the item with the given id.\nfunc (s *Store) Get(id int64) (Item, bool) {\n\ts.mu.Lock()\n\tdefer s.mu.Unlock()\n\titem, ok := s.items[id]\n\treturn item, ok\n}\n\n// Create stores a new item and returns it with its id and creation time.\nfunc (s *Store) Create(data map[string]any) Item {\n\ts.mu.Lock()\n\tdefer s.mu.Unlock()\n\titem := Item{\"id\": s.next, \"created_at\": time.Now().UTC().Format(time.RFC3339)}\n\tfor key, value := range data {\n\t\titem[key] = value\n\t}\n\ts.items[s.next] = item\n\ts.next++\n\treturn item\n}\n\n// Update merges data into an existing item.\nfunc (s *Store) Update(id int64, data map[string]any) (Item, bool) {\n\ts.mu.Lock()\n\tdefer s.mu.Unlock()\n\tcurrent, ok := s.items[id]\n\tif !ok {\n\t\treturn nil, false\n\t}\n\tupdated := make(Item, len(current))\n\tfor key, value := range current {\n\t\tupdated[key] = value\n\t}\n\tfor key, value := range data {\n\t\tupdated[key] = value\n\t}\n\ts.items[id] = updated\n\treturn updated, true\n}\n\n// Delete removes an item, and the items that belong to it, and reports whether it existed.\nfunc (s *Store) Delete(id int64) bool {\n\ts.mu.Lock()\n\t_, ok := s.items[id]\n\tdelete(s.items, id)\n\tdependents := s.dependents\n\ts.mu.Unlock() // not held while the children go: each store locks only itself\n\tif ok {\n\t\tfor _, child := range dependents {\n\t\t\tchild.store.deleteWhere(child.key, id)\n\t\t}\n\t}\n\treturn ok\n}\n\n// deleteWhere deletes every item whose key refers to id (and, in turn, their children).\nfunc (s *Store) deleteWhere(key string, id int64) {\n\ts.mu.Lock()\n\tvar doomed []int64\n\tfor itemID, item := range s.items {\n\t\tif refersTo(item[key], id) {\n\t\t\tdoomed = append(doomed, itemID)\n\t\t}\n\t}\n\ts.mu.Unlock()\n\tfor _, itemID := range doomed {\n\t\ts.Delete(itemID)\n\t}\n}\n",
+      "description": "In-memory storage per entity"
+     },
+     {
+      "path": "helpers_test.go",
+      "content": "package main\n\nimport (\n\t\"bytes\"\n\t\"encoding/json\"\n\t\"net/http\"\n\t\"net/http/httptest\"\n\t\"testing\"\n)\n\nfunc call(t *testing.T, server *httptest.Server, method, path string, body any) *http.Response {\n\tt.Helper()\n\tvar payload bytes.Buffer\n\tif body != nil {\n\t\tif err := json.NewEncoder(&payload).Encode(body); err != nil {\n\t\t\tt.Fatal(err)\n\t\t}\n\t}\n\trequest, err := http.NewRequest(method, server.URL+path, &payload)\n\tif err != nil {\n\t\tt.Fatal(err)\n\t}\n\trequest.Header.Set(\"Content-Type\", \"application/json\")\n\tresponse, err := server.Client().Do(request)\n\tif err != nil {\n\t\tt.Fatal(err)\n\t}\n\tt.Cleanup(func() { response.Body.Close() })\n\treturn response\n}\n\nfunc expect(t *testing.T, response *http.Response, status int) {\n\tt.Helper()\n\tif response.StatusCode != status {\n\t\tt.Fatalf(\"%s %s: status %d, want %d\", response.Request.Method, response.Request.URL.Path, response.StatusCode, status)\n\t}\n}\n\nfunc decode[T any](t *testing.T, response *http.Response, status int) T {\n\tt.Helper()\n\texpect(t, response, status)\n\tvar value T\n\tif err := json.NewDecoder(response.Body).Decode(&value); err != nil {\n\t\tt.Fatal(err)\n\t}\n\treturn value\n}\n\n// normalize gives a payload the shape JSON decoding produces (numbers as float64).\nfunc normalize(t *testing.T, value map[string]any) map[string]any {\n\tt.Helper()\n\tencoded, err := json.Marshal(value)\n\tif err != nil {\n\t\tt.Fatal(err)\n\t}\n\tvar decoded map[string]any\n\tif err := json.Unmarshal(encoded, &decoded); err != nil {\n\t\tt.Fatal(err)\n\t}\n\treturn decoded\n}\n\nfunc TestHealthz(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\tbody := decode[map[string]string](t, call(t, server, http.MethodGet, \"/healthz\", nil), http.StatusOK)\n\tif body[\"status\"] != \"ok\" {\n\t\tt.Fatalf(\"status = %q\", body[\"status\"])\n\t}\n}\n",
+      "description": "Test helpers and the health endpoint test"
+     },
+     {
+      "path": "expenses_test.go",
+      "content": "package main\n\nimport (\n\t\"fmt\"\n\t\"net/http\"\n\t\"net/http/httptest\"\n\t\"testing\"\n)\n\nvar expensePayload = map[string]any{\n\t\"description\": \"Some longer description text.\",\n\t\"amount\":      9.5,\n\t\"spent_on\":    \"2025-01-15\",\n}\n\nfunc TestExpenseCreateAndGet(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\tcreated := decode[map[string]any](t, call(t, server, http.MethodPost, \"/expenses\", expensePayload), http.StatusCreated)\n\tfor key, want := range normalize(t, expensePayload) {\n\t\tif created[key] != want {\n\t\t\tt.Errorf(\"%s = %v, want %v\", key, created[key], want)\n\t\t}\n\t}\n\tfetched := decode[map[string]any](t, call(t, server, http.MethodGet, fmt.Sprintf(\"/expenses/%v\", created[\"id\"]), nil), http.StatusOK)\n\tif fetched[\"id\"] != created[\"id\"] {\n\t\tt.Fatalf(\"id = %v, want %v\", fetched[\"id\"], created[\"id\"])\n\t}\n}\n\nfunc TestExpenseListPaginates(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\tfor range 3 {\n\t\texpect(t, call(t, server, http.MethodPost, \"/expenses\", expensePayload), http.StatusCreated)\n\t}\n\tpage := decode[[]map[string]any](t, call(t, server, http.MethodGet, \"/expenses?limit=2&offset=1\", nil), http.StatusOK)\n\tif len(page) != 2 {\n\t\tt.Fatalf(\"page has %d items, want 2\", len(page))\n\t}\n\texpect(t, call(t, server, http.MethodGet, \"/expenses?limit=0\", nil), http.StatusUnprocessableEntity)\n}\n\nfunc TestExpenseUpdate(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\tcreated := decode[map[string]any](t, call(t, server, http.MethodPost, \"/expenses\", expensePayload), http.StatusCreated)\n\tpath := fmt.Sprintf(\"/expenses/%v\", created[\"id\"])\n\tupdated := decode[map[string]any](t, call(t, server, http.MethodPatch, path, map[string]any{\"description\": \"Revised description text.\"}), http.StatusOK)\n\tif updated[\"description\"] != \"Revised description text.\" {\n\t\tt.Fatalf(\"description = %v\", updated[\"description\"])\n\t}\n}\n\nfunc TestExpenseDelete(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\tcreated := decode[map[string]any](t, call(t, server, http.MethodPost, \"/expenses\", expensePayload), http.StatusCreated)\n\tpath := fmt.Sprintf(\"/expenses/%v\", created[\"id\"])\n\texpect(t, call(t, server, http.MethodDelete, path, nil), http.StatusNoContent)\n\texpect(t, call(t, server, http.MethodGet, path, nil), http.StatusNotFound)\n}\n\nfunc TestExpenseUnknownIDIs404(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\texpect(t, call(t, server, http.MethodGet, \"/expenses/999999\", nil), http.StatusNotFound)\n\texpect(t, call(t, server, http.MethodGet, \"/expenses/not-a-number\", nil), http.StatusNotFound)\n}\n\nfunc TestExpenseRejectsInvalidInput(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\texpect(t, call(t, server, http.MethodPost, \"/expenses\", map[string]any{\"unknown_field\": 1}), http.StatusUnprocessableEntity)\n\texpect(t, call(t, server, http.MethodPost, \"/expenses\", map[string]any{}), http.StatusUnprocessableEntity)\n}\n",
+      "description": "API tests for expenses"
+     }
+    ],
+    "notes": "Rendered from offline templates."
+   }
+  },
+  {
+   "agent": "devops",
+   "request_sha256": "9a81955fc2d3e03b1b11a2d89bbfd0c6cd29510f8d408872f7b7ca8044766402",
+   "model": "offline-templates-v1",
+   "usage": {},
+   "output": {
+    "files": [
+     {
+      "path": "Dockerfile",
+      "content": "# syntax=docker/dockerfile:1.7\nFROM golang:1.27-bookworm AS build\nWORKDIR /src\nCOPY go.mod ./\nCOPY *.go ./\nRUN CGO_ENABLED=0 go build -trimpath -ldflags=\"-s -w\" -o /out/app .\n\nFROM gcr.io/distroless/static-debian12:nonroot\nCOPY --from=build /out/app /app\nENV PORT=8000\nUSER 65532\nEXPOSE 8000\nHEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \\\n  CMD [\"/app\", \"-healthcheck\"]\nENTRYPOINT [\"/app\"]\n",
+      "description": "Non-root image with a health check"
+     },
+     {
+      "path": ".dockerignore",
+      "content": ".git\n.github\ndeploy/\n*_test.go\n",
+      "description": "Keeps the build context small"
+     },
+     {
+      "path": ".github/workflows/ci.yml",
+      "content": "name: CI\n\non:\n  push:\n    branches: [main]\n  pull_request:\n\npermissions:\n  contents: read\n\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - uses: actions/setup-go@v7\n        with:\n          go-version-file: go.mod\n      - name: Format\n        run: test -z \"$(gofmt -l .)\"\n      - name: Vet\n        run: go vet ./...\n      - name: Test\n        run: go test ./...\n\n  image:\n    runs-on: ubuntu-latest\n    needs: test\n    steps:\n      - uses: actions/checkout@v7\n      - uses: docker/setup-buildx-action@v4\n      - name: Build image\n        uses: docker/build-push-action@v7\n        with:\n          context: .\n          push: false\n          tags: expenses-service:${{ github.sha }}\n",
+      "description": "Lint, type check, test and image build on every push"
+     },
+     {
+      "path": "deploy/k8s/deployment.yaml",
+      "content": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: expenses-service\n  labels:\n    app.kubernetes.io/name: expenses-service\nspec:\n  replicas: 1\n  selector:\n    matchLabels:\n      app.kubernetes.io/name: expenses-service\n  template:\n    metadata:\n      labels:\n        app.kubernetes.io/name: expenses-service\n    spec:\n      securityContext:\n        runAsNonRoot: true\n        runAsUser: 10001\n        seccompProfile:\n          type: RuntimeDefault\n      containers:\n        - name: api\n          image: expenses-service:latest\n          imagePullPolicy: IfNotPresent\n          ports:\n            - name: http\n              containerPort: 8000\n          env:\n            - name: DATABASE_URL\n              valueFrom:\n                secretKeyRef:\n                  name: expenses-service-database\n                  key: url\n                  optional: true\n          readinessProbe:\n            httpGet:\n              path: /healthz\n              port: http\n            periodSeconds: 10\n          livenessProbe:\n            httpGet:\n              path: /healthz\n              port: http\n            initialDelaySeconds: 10\n            periodSeconds: 20\n          resources:\n            requests:\n              cpu: 100m\n              memory: 128Mi\n            limits:\n              cpu: 500m\n              memory: 256Mi\n          securityContext:\n            allowPrivilegeEscalation: false\n            capabilities:\n              drop: [ALL]\n",
+      "description": "Deployment with probes, limits and a restricted security context"
+     },
+     {
+      "path": "deploy/k8s/service.yaml",
+      "content": "apiVersion: v1\nkind: Service\nmetadata:\n  name: expenses-service\n  labels:\n    app.kubernetes.io/name: expenses-service\nspec:\n  selector:\n    app.kubernetes.io/name: expenses-service\n  ports:\n    - name: http\n      port: 80\n      targetPort: http\n",
+      "description": "ClusterIP service"
+     },
+     {
+      "path": "deploy/k8s/kustomization.yaml",
+      "content": "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nlabels:\n  - pairs:\n      app.kubernetes.io/part-of: expenses-service\nresources:\n  - deployment.yaml\n  - service.yaml\n",
+      "description": "Kustomize entry point"
+     },
+     {
+      "path": "deploy/terraform/versions.tf",
+      "content": "terraform {\n  required_version = \">= 1.6\"\n  required_providers {\n    aws = {\n      source  = \"hashicorp/aws\"\n      version = \"~> 5.0\"\n    }\n  }\n}\n\nprovider \"aws\" {\n  region = var.region\n}\n",
+      "description": "Terraform and provider constraints"
+     },
+     {
+      "path": "deploy/terraform/variables.tf",
+      "content": "variable \"region\" {\n  description = \"AWS region to deploy into\"\n  type        = string\n  default     = \"us-east-1\"\n}\n\nvariable \"name\" {\n  description = \"Name prefix for every resource\"\n  type        = string\n  default     = \"expenses-service\"\n}\n\nvariable \"image_tag\" {\n  description = \"Immutable image tag in the ECR repository to run (e.g. a git SHA)\"\n  type        = string\n}\n\nvariable \"vpc_id\" {\n  description = \"VPC the service runs in\"\n  type        = string\n}\n\nvariable \"subnet_ids\" {\n  description = \"Private subnets for the Fargate tasks\"\n  type        = list(string)\n}\n\nvariable \"container_port\" {\n  description = \"Port the container listens on\"\n  type        = number\n  default     = 8000\n}\n\nvariable \"desired_count\" {\n  description = \"Number of running tasks\"\n  type        = number\n  default     = 1\n}\n\nvariable \"database_url_secret_arn\" {\n  description = \"Optional Secrets Manager ARN holding DATABASE_URL\"\n  type        = string\n  default     = \"\"\n}\n",
+      "description": "Inputs: region, VPC, subnets, image tag"
+     },
+     {
+      "path": "deploy/terraform/main.tf",
+      "content": "locals {\n  secrets = var.database_url_secret_arn == \"\" ? [] : [\n    { name = \"DATABASE_URL\", valueFrom = var.database_url_secret_arn }\n  ]\n}\n\nresource \"aws_ecr_repository\" \"app\" {\n  name                 = var.name\n  image_tag_mutability = \"IMMUTABLE\"\n\n  image_scanning_configuration {\n    scan_on_push = true\n  }\n}\n\nresource \"aws_cloudwatch_log_group\" \"app\" {\n  name              = \"/ecs/${var.name}\"\n  retention_in_days = 30\n}\n\nresource \"aws_ecs_cluster\" \"this\" {\n  name = var.name\n\n  setting {\n    name  = \"containerInsights\"\n    value = \"enabled\"\n  }\n}\n\ndata \"aws_iam_policy_document\" \"ecs_tasks_assume\" {\n  statement {\n    actions = [\"sts:AssumeRole\"]\n    principals {\n      type        = \"Service\"\n      identifiers = [\"ecs-tasks.amazonaws.com\"]\n    }\n  }\n}\n\nresource \"aws_iam_role\" \"execution\" {\n  name               = \"${var.name}-execution\"\n  assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json\n}\n\nresource \"aws_iam_role_policy_attachment\" \"execution\" {\n  role       = aws_iam_role.execution.name\n  policy_arn = \"arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy\"\n}\n\nresource \"aws_security_group\" \"service\" {\n  name        = \"${var.name}-service\"\n  description = \"Ingress to the ${var.name} tasks\"\n  vpc_id      = var.vpc_id\n\n  ingress {\n    description = \"HTTP from inside the VPC\"\n    from_port   = var.container_port\n    to_port     = var.container_port\n    protocol    = \"tcp\"\n    cidr_blocks = [\"10.0.0.0/8\"]\n  }\n\n  egress {\n    description = \"Outbound HTTPS and database traffic\"\n    from_port   = 0\n    to_port     = 0\n    protocol    = \"-1\"\n    cidr_blocks = [\"0.0.0.0/0\"]\n  }\n}\n\nresource \"aws_ecs_task_definition\" \"app\" {\n  family                   = var.name\n  requires_compatibilities = [\"FARGATE\"]\n  network_mode             = \"awsvpc\"\n  cpu                      = 256\n  memory                   = 512\n  execution_role_arn       = aws_iam_role.execution.arn\n\n  container_definitions = jsonencode([\n    {\n      name         = \"api\"\n      image        = \"${aws_ecr_repository.app.repository_url}:${var.image_tag}\"\n      essential    = true\n      portMappings = [{ containerPort = var.container_port, protocol = \"tcp\" }]\n      secrets      = local.secrets\n      logConfiguration = {\n        logDriver = \"awslogs\"\n        options = {\n          awslogs-group         = aws_cloudwatch_log_group.app.name\n          awslogs-region        = var.region\n          awslogs-stream-prefix = \"api\"\n        }\n      }\n    }\n  ])\n}\n\nresource \"aws_ecs_service\" \"app\" {\n  name            = var.name\n  cluster         = aws_ecs_cluster.this.id\n  task_definition = aws_ecs_task_definition.app.arn\n  desired_count   = var.desired_count\n  launch_type     = \"FARGATE\"\n\n  network_configuration {\n    subnets          = var.subnet_ids\n    security_groups  = [aws_security_group.service.id]\n    assign_public_ip = false\n  }\n\n  deployment_circuit_breaker {\n    enable   = true\n    rollback = true\n  }\n}\n",
+      "description": "ECR repository, ECS cluster, task definition and service"
+     },
+     {
+      "path": "deploy/terraform/outputs.tf",
+      "content": "output \"ecr_repository_url\" {\n  description = \"Push the image here\"\n  value       = aws_ecr_repository.app.repository_url\n}\n\noutput \"ecs_service_name\" {\n  description = \"Name of the ECS service\"\n  value       = aws_ecs_service.app.name\n}\n",
+      "description": "Repository URL and service name"
+     }
+    ],
+    "notes": ""
+   }
+  },
+  {
+   "agent": "reviewer",
+   "request_sha256": "68c2deb017f439ecac79ddacd6ebc1e7ff265d2ebe1182b670c35b8a70adc772",
+   "model": "offline-templates-v1",
+   "usage": {},
+   "output": {
+    "summary": "Deterministic review of 22 files: the project passes all structural checks with 0 warning(s). All 7 generated tests pass in the sandbox. Offline reviews do not judge business logic.",
+    "score": 100,
+    "findings": [
+     {
+      "severity": "info",
+      "file": null,
+      "message": "Data is kept in memory: it is lost on restart and not shared between replicas.",
+      "suggestion": "Put a database behind the store module before running more than one replica."
+     },
+     {
+      "severity": "info",
+      "file": null,
+      "message": "The API is unauthenticated because the spec did not ask for auth.",
+      "suggestion": "Add OAuth2 or an authenticating gateway before exposing it publicly."
+     }
+    ]
+   }
+  }
+ ]
+}

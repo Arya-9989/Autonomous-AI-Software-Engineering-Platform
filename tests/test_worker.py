@@ -96,9 +96,15 @@ async def test_shutdown_requeues_in_flight_jobs(harness_factory: HarnessFactory)
 
     job = (await harness.client.get(f"/api/v1/jobs/{job_id}", headers=ALICE)).json()
     assert job["status"] == "queued"
-    assert {s["status"] for s in job["stages"]} == {"pending"}
+    # Checkpoints survive the requeue: the next worker resumes at the coder, so the analyst and
+    # architect are not run (or billed) twice. The interrupted stage starts over.
+    statuses = [s["status"] for s in job["stages"]]
+    assert statuses == ["succeeded", "succeeded", "pending", "pending", "pending"]
     files = (await harness.client.get(f"/api/v1/jobs/{job_id}/files", headers=ALICE)).json()
-    assert files == []
+    assert files and {f["stage"] for f in files} == {"architect"}
+    assert (
+        await harness.client.get(f"/api/v1/jobs/{job_id}/requirements", headers=ALICE)
+    ).status_code == 200
 
 
 async def test_stale_running_jobs_are_reaped(harness_factory: HarnessFactory) -> None:
@@ -202,3 +208,50 @@ async def test_reaped_job_keeps_its_outcome_when_the_worker_returns(
     )
     terminal = [e["event"] for e in events if e["event"] in {"job.failed", "job.succeeded"}]
     assert terminal == ["job.failed"]
+
+
+async def test_shutdown_drains_jobs_that_finish_in_time(harness_factory: HarnessFactory) -> None:
+    provider = ScriptedProvider()
+    entered, gate = provider.pause("coder")
+    harness = await harness_factory(registry=registry_with(provider), worker_drain_s=10)
+    job_id = (await harness.submit())["id"]
+    await asyncio.wait_for(entered.wait(), 5)
+
+    stopping = asyncio.create_task(harness.worker.stop())  # SIGTERM while a job runs
+    await asyncio.sleep(0.2)
+    assert not stopping.done()  # it waits for the job instead of cancelling it
+    gate.set()
+    await asyncio.wait_for(stopping, 10)
+    job = (await harness.client.get(f"/api/v1/jobs/{job_id}", headers=ALICE)).json()
+    assert job["status"] == "succeeded"
+
+
+async def test_a_stopping_worker_claims_nothing_new_and_requeues_what_outlives_the_drain(
+    harness_factory: HarnessFactory,
+) -> None:
+    provider = ScriptedProvider()
+    entered, _gate = provider.pause("coder")  # never released: outlives the drain
+    harness = await harness_factory(
+        registry=registry_with(provider), worker_drain_s=0.3, worker_concurrency=1
+    )
+    first = (await harness.submit())["id"]
+    await asyncio.wait_for(entered.wait(), 5)
+    second = (await harness.submit())["id"]  # waits: the only slot is busy
+
+    await harness.worker.stop()
+
+    for job_id in (first, second):
+        job = (await harness.client.get(f"/api/v1/jobs/{job_id}", headers=ALICE)).json()
+        assert job["status"] == "queued", job_id  # handed back, not lost
+
+
+async def test_a_worker_only_process_serves_probes_and_metrics_only(
+    harness_factory: HarnessFactory,
+) -> None:
+    harness = await harness_factory(serve_api=False)
+    assert (await harness.client.get("/healthz")).status_code == 200
+    ready = await harness.client.get("/readyz")
+    assert ready.json()["checks"] == {"database": "ok", "worker": "ok"}
+    assert (await harness.client.get("/metrics")).status_code == 200
+    assert (await harness.client.get("/api/v1/jobs", headers=ALICE)).status_code == 404
+    assert (await harness.client.post("/api/v1/jobs", json={}, headers=ALICE)).status_code == 404

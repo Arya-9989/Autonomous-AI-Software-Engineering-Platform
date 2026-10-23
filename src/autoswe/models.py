@@ -93,6 +93,8 @@ class Job(Base):
     __table_args__ = (
         Index("ix_jobs_status_created_at", "status", "created_at"),
         Index("ix_jobs_owner_created_at", "owner", "created_at"),
+        # One job per (owner, Idempotency-Key); NULL keys never collide on either backend.
+        Index("uq_jobs_owner_idempotency_key", "owner", "idempotency_key", unique=True),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -100,6 +102,7 @@ class Job(Base):
     title: Mapped[str] = mapped_column(String(200))
     spec: Mapped[str] = mapped_column(Text)
     provider: Mapped[str] = mapped_column(String(32))
+    stack: Mapped[str] = mapped_column(String(16), default="python", server_default="python")
     model: Mapped[str | None] = mapped_column(String(128))
     status: Mapped[JobStatus] = mapped_column(_enum(JobStatus), default=JobStatus.QUEUED)
     current_stage: Mapped[str | None] = mapped_column(String(32))
@@ -110,9 +113,32 @@ class Job(Base):
     architecture: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     validation: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     review: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    test_report: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cache_read_input_tokens: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    cache_creation_input_tokens: Mapped[int] = mapped_column(
+        BigInteger, default=0, server_default="0"
+    )
+    cost_microusd: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    unpriced_calls: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Budget reservation still held by this job, and the budget period it was taken from.
+    tokens_reserved: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    budget_period_start: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    # The submitting request's ID and W3C trace context: the worker's job span continues it.
+    request_id: Mapped[str | None] = mapped_column(String(64))
+    trace_context: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    # Where the project was published (repository, PR); {"status": "publishing"} while it runs.
+    publication: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     worker_id: Mapped[str | None] = mapped_column(String(64))
+    # Automatic retries after transient provider failures, and the earliest time a job that was
+    # requeued for one may be claimed again (None: as soon as a worker is free).
+    retries: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # The submission's Idempotency-Key and a hash of its body: a repeat returns this job.
+    idempotency_key: Mapped[str | None] = mapped_column(String(128))
+    request_hash: Mapped[str | None] = mapped_column(String(64))
+    run_after: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
     started_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
@@ -139,6 +165,11 @@ class StageRun(Base):
     summary: Mapped[str | None] = mapped_column(Text)
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cache_read_input_tokens: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    cache_creation_input_tokens: Mapped[int] = mapped_column(
+        BigInteger, default=0, server_default="0"
+    )
+    cost_microusd: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
     started_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
@@ -169,3 +200,27 @@ class JobEvent(Base):
     type: Mapped[str] = mapped_column(String(32))
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class PrincipalUsage(Base):
+    """Token and cost ledger per principal and budget period; the source of truth for budgets.
+
+    ``used_tokens`` only grows. ``reserved_tokens`` is what running and queued jobs may still
+    spend; a job takes a reservation with a single compare-and-set ``UPDATE ... WHERE
+    used_tokens + reserved_tokens + :amount <= :limit``, so concurrent jobs cannot overspend.
+    """
+
+    __tablename__ = "principal_usage"
+
+    principal: Mapped[str] = mapped_column(String(128), primary_key=True)
+    period_start: Mapped[datetime] = mapped_column(UTCDateTime, primary_key=True)
+    used_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    reserved_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    input_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    output_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    cache_read_input_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    cache_creation_input_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    cost_microusd: Mapped[int] = mapped_column(BigInteger, default=0)
+    unpriced_calls: Mapped[int] = mapped_column(Integer, default=0)
+    model_calls: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)

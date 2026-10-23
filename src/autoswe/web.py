@@ -5,6 +5,12 @@ files under ``assets/``, and Brotli (``.br``) and gzip (``.gz``) copies of the t
 Hashed assets never change, so they are cached for a year as immutable; HTML is revalidated on
 every load. Each response is the smallest encoding the client accepts, with nothing compressed
 per request. Paths under ``/api`` and ``/assets`` are never answered with a page.
+
+A path that is not one of the client router's routes is answered with **HTTP 404** and the
+page the router renders as "Page not found" (a prerendered ``404.html`` if the build has one,
+else the shell), so crawlers and monitors see a real 404 while people still see the designed
+page. :data:`CLIENT_ROUTES` mirrors ``frontend/src/App.tsx`` and ``AppShell.tsx``; a test keeps
+the two in step.
 """
 
 from __future__ import annotations
@@ -75,7 +81,9 @@ def _inside(root: Path, relative: str) -> Path | None:
     return None
 
 
-def _send(file: Path, request: Request, cache_control: str) -> FileResponse:
+def _send(
+    file: Path, request: Request, cache_control: str, status_code: int = status.HTTP_200_OK
+) -> FileResponse:
     """``file``, or its smallest precompressed variant the client accepts."""
     headers = {"Cache-Control": cache_control}
     variants = [
@@ -89,14 +97,29 @@ def _send(file: Path, request: Request, cache_control: str) -> FileResponse:
         for coding, variant in variants:
             if coding in accepted:
                 headers["Content-Encoding"] = coding
-                return FileResponse(variant, media_type=media_type(file), headers=headers)
-    return FileResponse(file, media_type=media_type(file), headers=headers)
+                return FileResponse(
+                    variant, status_code=status_code, media_type=media_type(file), headers=headers
+                )
+    return FileResponse(file, status_code=status_code, media_type=media_type(file), headers=headers)
 
 
 # Which HTML document each route gets (see frontend/scripts/prerender.mjs). Each one hydrates
 # exactly what it was prerendered with, so a route may only get a page rendered for it.
 PAGES = ("index.html", "app.html", "job.html", "shell.html")
+NOT_FOUND_PAGE = "404.html"
 _JOB_ROUTE = re.compile(r"^app/jobs/[^/]+/?$")
+# Paths (without the leading slash) the client router renders a real page for: "/" (landing),
+# "/app" (new project), "/app/jobs/:jobId" (a job) and "/jobs/:jobId" (legacy, redirects).
+CLIENT_ROUTES = (
+    re.compile(r"^$"),
+    re.compile(r"^app/?$"),
+    _JOB_ROUTE,
+    re.compile(r"^jobs/[^/]+/?$"),
+)
+
+
+def is_client_route(full_path: str) -> bool:
+    return any(route.match(full_path) for route in CLIENT_ROUTES)
 
 
 def html_pages(static_dir: Path) -> list[Path]:
@@ -118,6 +141,8 @@ def page_for(full_path: str) -> str:
 def mount_frontend(app: FastAPI, static_dir: Path) -> None:
     index = static_dir / "index.html"
     shell = static_dir / "shell.html" if (static_dir / "shell.html").is_file() else index
+    not_found = static_dir / NOT_FOUND_PAGE
+    not_found_page = not_found if not_found.is_file() else shell
     assets = static_dir / "assets"
 
     def document(name: str) -> Path:
@@ -143,4 +168,6 @@ def mount_frontend(app: FastAPI, static_dir: Path) -> None:
             file = _inside(static_dir, full_path)
             if file is not None and file.suffix not in {".br", ".gz"}:
                 return FileResponse(file, media_type=media_type(file))
+        if not is_client_route(full_path):
+            return _send(not_found_page, request, "no-cache", status.HTTP_404_NOT_FOUND)
         return _send(document(name), request, "no-cache")

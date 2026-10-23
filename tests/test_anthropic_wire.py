@@ -29,6 +29,7 @@ from autoswe.llm.base import (
     LLMRefusalError,
     LLMRequest,
     LLMTransientError,
+    TokenUsage,
 )
 from autoswe.pipeline.artifacts import ReviewReport
 
@@ -298,6 +299,20 @@ async def test_fallback_usage_counts_every_attempt() -> None:
     response = await _provider(Transport(body)).generate(REQUEST)
     assert response.usage.input_tokens == 120 + 900 + 1020
     assert response.usage.output_tokens == 15 + 40
+    assert response.usage.cache_read_input_tokens == 900
+    # Each attempt is billed at the model that served it, for pricing.
+    assert response.billed == (
+        (MODEL, TokenUsage(input_tokens=1020, output_tokens=15, cache_read_input_tokens=900)),
+        ("claude-opus-4-8", TokenUsage(input_tokens=1020, output_tokens=40)),
+    )
+
+
+async def test_cache_tokens_are_broken_out_without_fallbacks() -> None:
+    response = await _provider(Transport(_success_body())).generate(REQUEST)
+    assert response.usage.cache_read_input_tokens == 900
+    assert response.usage.cache_creation_input_tokens == 30
+    assert response.usage.uncached_input_tokens == 120
+    assert response.billed == ((MODEL, response.usage),)
 
 
 async def test_refusal_reports_the_category_from_stop_details() -> None:

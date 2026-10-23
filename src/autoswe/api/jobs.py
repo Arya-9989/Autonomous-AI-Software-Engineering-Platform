@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import logging
 import re
 import time
 from collections.abc import AsyncIterator
@@ -14,18 +16,39 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request, Response, 
 from fastapi.responses import StreamingResponse
 
 from autoswe.api.deps import PrincipalDep, RepositoryDep, ServicesDep
+from autoswe.budget import TokenBudgetExceededError, UsageRepository, period_bounds
+from autoswe.llm.base import is_metered
 from autoswe.llm.registry import UnknownProviderError
+from autoswe.logging_config import request_id_var
 from autoswe.models import Job, JobStatus
-from autoswe.observability import JOBS_SUBMITTED
+from autoswe.observability import (
+    BUDGET_REJECTIONS,
+    GITHUB_PUBLISH,
+    JOB_RETRIES,
+    JOBS_SUBMITTED,
+)
 from autoswe.pipeline.artifacts import (
     ArchitectureSpec,
+    GeneratedFile,
     Requirements,
     ReviewReport,
     ValidationReport,
 )
 from autoswe.pipeline.naming import kebab
 from autoswe.pipeline.packaging import build_zip
-from autoswe.repository import JobRepository
+from autoswe.publishing import (
+    GitHubClient,
+    PublishError,
+    publish_project,
+    pull_request_body,
+    repository_name_problem,
+)
+from autoswe.repository import (
+    BudgetRefusedError,
+    DuplicateSubmissionError,
+    JobRepository,
+    Reservation,
+)
 from autoswe.schemas import (
     FileContent,
     FileEntry,
@@ -33,10 +56,14 @@ from autoswe.schemas import (
     JobDetail,
     JobPage,
     JobSummary,
+    PublicationOut,
+    PublishRequest,
     language_for,
 )
+from autoswe.tracing import current_context_carrier, mark_error, tracer
 
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
+logger = logging.getLogger(__name__)
 
 SSE_KEEPALIVE_S = 15.0
 SSE_POLL_S = 1.0
@@ -59,10 +86,52 @@ async def _owned_job(repo: JobRepository, job_id: str, owner: str) -> Job:
     return job
 
 
-@router.post("", status_code=status.HTTP_202_ACCEPTED, response_model=JobDetail)
+IdempotencyKey = Annotated[
+    str | None,
+    Header(
+        alias="Idempotency-Key",
+        pattern=r"^[A-Za-z0-9._:-]{1,128}$",
+        description="Retrying a submission with the same key returns the job it created "
+        "instead of creating (and paying for) another. Reusing a key with a different body is "
+        "a 422. A key is held for as long as its job exists.",
+    ),
+]
+
+
+def _request_hash(payload: JobCreate) -> str:
+    body = json.dumps(payload.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(body.encode()).hexdigest()
+
+
+def _replay(job: Job, request_hash: str, response: Response) -> JobDetail:
+    if job.request_hash != request_hash:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Idempotency-Key was already used for a different request",
+        )
+    response.headers["Idempotent-Replayed"] = "true"
+    return JobDetail.from_model(job)
+
+
+@router.post(
+    "",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=JobDetail,
+    responses={422: {"description": "Invalid body, or an Idempotency-Key reused for another"}},
+)
 async def create_job(
-    payload: JobCreate, principal: PrincipalDep, repo: RepositoryDep, services: ServicesDep
+    payload: JobCreate,
+    principal: PrincipalDep,
+    repo: RepositoryDep,
+    services: ServicesDep,
+    response: Response,
+    idempotency_key: IdempotencyKey = None,
 ) -> JobDetail:
+    request_hash = _request_hash(payload) if idempotency_key else None
+    if idempotency_key and request_hash:
+        existing = await repo.by_idempotency_key(principal.name, idempotency_key)
+        if existing is not None:  # a retry: hand back the job, no new job, no new reservation
+            return _replay(existing, request_hash, response)
     try:
         provider = services.registry.get(payload.provider)
     except UnknownProviderError:
@@ -77,13 +146,41 @@ async def create_job(
             status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"At most {limit} queued or running jobs per API key.",
         )
-    job = await repo.create(
-        owner=principal.name,
-        title=payload.title or _title_from_spec(payload.spec),
-        spec=payload.spec,
-        provider=provider.name,
-        model=provider.model,
-    )
+    reservation = None
+    if is_metered(provider):
+        policy = services.budget
+        budget = policy.limit_for(principal.name)
+        start, _ = period_bounds(policy.period)
+        reservation = Reservation(start, policy.reservation_for(budget), budget)
+    try:
+        job = await repo.create(
+            owner=principal.name,
+            title=payload.title or _title_from_spec(payload.spec),
+            spec=payload.spec,
+            provider=provider.name,
+            model=provider.model,
+            reservation=reservation,
+            request_id=request_id_var.get(),
+            trace_context=current_context_carrier(),
+            stack=payload.stack.value,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+        )
+    except DuplicateSubmissionError:  # a concurrent retry with the same key got there first
+        assert idempotency_key is not None
+        assert request_hash is not None
+        winner = await repo.by_idempotency_key(principal.name, idempotency_key)
+        assert winner is not None
+        return _replay(winner, request_hash, response)
+    except BudgetRefusedError:
+        BUDGET_REJECTIONS.labels("submit").inc()
+        state = await UsageRepository(repo.session).state(services.budget, principal.name)
+        raise TokenBudgetExceededError(
+            f"Token budget exhausted: {state.used} of {state.limit} tokens used and "
+            f"{state.reserved} reserved by running jobs this {state.period}"
+            + (f"; it resets at {state.resets_at.isoformat()}" if state.resets_at else ""),
+            state,
+        ) from None
     JOBS_SUBMITTED.labels(provider.name).inc()
     services.notifier.notify_queue()
     refreshed = await repo.get(job.id)
@@ -136,6 +233,68 @@ async def cancel_job(
     return JobDetail.from_model(refreshed)
 
 
+@router.post(
+    "/{job_id}/retry",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=JobDetail,
+    responses={402: {"description": "The token budget has no room for the job's reservation"},
+               409: {"description": "Only a failed job can be retried"},
+               429: {"description": "Too many queued or running jobs for this API key"}},
+)  # fmt: skip
+async def retry_job(
+    job_id: str, principal: PrincipalDep, repo: RepositoryDep, services: ServicesDep
+) -> JobDetail:
+    """Requeue a failed job. It resumes at the stage that failed: the stages that completed
+    keep their results (and were already paid for), so only the rest runs again."""
+    job = await _owned_job(repo, job_id, principal.name)
+    if job.status is not JobStatus.FAILED:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail=f"Only a failed job can be retried; it is {job.status.value}",
+        )
+    limit = services.settings.max_active_jobs_per_owner
+    if await repo.count_active(principal.name) >= limit:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"At most {limit} queued or running jobs per API key.",
+        )
+    try:
+        provider = services.registry.get(job.provider)
+    except UnknownProviderError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail=f"The job's provider '{job.provider}' is no longer configured",
+        ) from None
+    reservation = None
+    if is_metered(provider):
+        policy = services.budget
+        budget = policy.limit_for(principal.name)
+        start, _ = period_bounds(policy.period)
+        reservation = Reservation(start, policy.reservation_for(budget), budget)
+    try:
+        retried = await repo.retry_failed(job_id, principal.name, reservation)
+    except BudgetRefusedError:
+        BUDGET_REJECTIONS.labels("retry").inc()
+        state = await UsageRepository(repo.session).state(services.budget, principal.name)
+        raise TokenBudgetExceededError(
+            f"Token budget exhausted: {state.used} of {state.limit} tokens used and "
+            f"{state.reserved} reserved by running jobs this {state.period}",
+            state,
+        ) from None
+    if not retried:  # it changed state between the read above and the retry
+        current = await repo.get(job_id)
+        detail = current.status.value if current else "gone"
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail=f"Only a failed job can be retried; it is {detail}"
+        )
+    JOB_RETRIES.labels("manual").inc()
+    services.notifier.notify_job(job_id)
+    services.notifier.notify_queue()
+    refreshed = await repo.get(job_id)
+    assert refreshed is not None
+    return JobDetail.from_model(refreshed)
+
+
 @router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_job(job_id: str, principal: PrincipalDep, repo: RepositoryDep) -> Response:
     job = await _owned_job(repo, job_id, principal.name)
@@ -171,6 +330,99 @@ async def get_review(job_id: str, principal: PrincipalDep, repo: RepositoryDep) 
     if job.review is None or job.validation is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Review not produced yet")
     return {**job.review, "validation": job.validation}
+
+
+@router.get("/{job_id}/tests")
+async def get_test_report(job_id: str, principal: PrincipalDep, repo: RepositoryDep) -> Any:
+    """The sandboxed test run: the final result (lint, type check, tests, failures) and the
+    status of every attempt, including the ones before each repair round."""
+    job = await _owned_job(repo, job_id, principal.name)
+    if job.test_report is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Tests were not run for this job")
+    return job.test_report
+
+
+@router.post(
+    "/{job_id}/publish",
+    status_code=status.HTTP_201_CREATED,
+    response_model=PublicationOut,
+    responses={409: {"description": "Not succeeded, already published, or the name is taken"},
+               503: {"description": "Publishing is not configured, or GitHub rate-limited us"}},
+)  # fmt: skip
+async def publish_job(
+    job_id: str,
+    payload: PublishRequest,
+    principal: PrincipalDep,
+    repo: RepositoryDep,
+    services: ServicesDep,
+) -> Any:
+    """Create a new GitHub repository, commit the project on a branch and open a pull request.
+
+    Uses the server's publishing token (``GITHUB_PUBLISH_TOKEN``); the caller chooses only the
+    new repository's name, visibility and description. A job is published at most once."""
+    job = await _owned_job(repo, job_id, principal.name)
+    settings = services.settings
+    if not settings.github_publishing_enabled:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Publishing to GitHub is not configured (GITHUB_PUBLISH_TOKEN).",
+        )
+    problem = repository_name_problem(payload.repository)
+    if problem:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"Invalid repository name: {problem}"
+        )
+    if job.status is not JobStatus.SUCCEEDED:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Only a succeeded job is published")
+    if not await repo.claim_publication(job_id):
+        current = (await repo.get(job_id)) or job
+        where = (current.publication or {}).get("pull_request_url") or "in progress"
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=f"Job already published ({where})")
+    files = [GeneratedFile(path=f.path, content=f.content) for f in await repo.list_files(job_id)]
+    assert settings.github_publish_token is not None
+    with tracer().start_as_current_span(
+        "autoswe.github.publish",
+        attributes={"autoswe.job.id": job_id, "autoswe.github.repository": payload.repository,
+                    "autoswe.github.visibility": payload.visibility, "autoswe.files": len(files)},
+    ) as span:  # fmt: skip
+        try:
+            async with GitHubClient(
+                settings.github_publish_token.get_secret_value(),
+                api_url=settings.github_api_url,
+                timeout_s=settings.github_timeout_s,
+                transport=services.github_transport,
+            ) as client:
+                publication = await publish_project(
+                    client,
+                    owner=settings.github_publish_owner,
+                    name=payload.repository,
+                    visibility=payload.visibility,
+                    description=payload.description or job.title,
+                    files=files,
+                    branch=f"autoswe/{job_id[:8]}",
+                    title=f"AutoSWE: {job.title}",
+                    body=pull_request_body(job, len(files)),
+                )
+        except PublishError as exc:
+            GITHUB_PUBLISH.labels(exc.code).inc()
+            mark_error(span, exc, exc.code)
+            message = str(exc)
+            # A taken name or a failure before the repository existed can be retried later.
+            created = "was created" in message
+            failed = {"status": "failed", "error": message, "code": exc.code} if created else None
+            await repo.record_publication(
+                job_id, failed, "job.publish_failed", {"error": message, "code": exc.code}
+            )
+            logger.warning("publish failed", extra={"code": exc.code, "error": message})
+            headers = {"Retry-After": exc.retry_after} if exc.retry_after else None
+            raise HTTPException(exc.status_code, detail=message, headers=headers) from None
+    GITHUB_PUBLISH.labels("published").inc()
+    result = publication.as_dict()
+    await repo.record_publication(job_id, result, "job.published", {
+        "repository": publication.repository, "pull_request_url": publication.pull_request_url,
+    })  # fmt: skip
+    span.set_attribute("autoswe.github.pull_request", publication.pull_request_url)
+    return result
 
 
 @router.get("/{job_id}/files", response_model=list[FileEntry])
