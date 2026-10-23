@@ -519,15 +519,16 @@ development its Docker image was also built and run, and it reported `healthy`.
 
 ```bash
 uv run ruff check . && uv run ruff format --check . && uv run mypy   # lint, format, strict types
-uv run pytest -q --cov --cov-report=term                              # 378 tests, coverage gate 93%
-cd frontend && npm run lint && npm run typecheck && npm test && npm run build   # 27 unit tests
-npm run e2e        # in frontend/, after the build: 24 Playwright + axe tests on the real stack
+uv run pytest -q --cov --cov-report=term                              # 500 tests, coverage gate 95.5%
+cd frontend && npm run lint && npm run typecheck && npm test && npm run build   # 43 unit tests
+npm run e2e        # in frontend/, after the build: 34 Playwright + axe tests on the real stack
 ```
 
-The backend count is what this branch collects: 375 pass and 3 skip on a machine with Docker and
-the sandbox image (the skips: the PostgreSQL race test without `AUTOSWE_TEST_POSTGRES_URL`, a
-POSIX-only test on Windows, and the UI test without a built frontend). CI runs the PostgreSQL test
-against a service container and the real-container sandbox tests in a separate job.
+The backend count is what this branch collects: 497 pass and 3 skip on a Windows machine with
+Docker, the sandbox images and a built frontend (coverage 96.5%). The skips are the two PostgreSQL
+tests (the budget race, and the generated project's migrations) without
+`AUTOSWE_TEST_POSTGRES_URL`, and a POSIX-only test. CI runs the PostgreSQL tests against a service
+container and the real-container sandbox tests in a separate job.
 
 The backend tests cover:
 
