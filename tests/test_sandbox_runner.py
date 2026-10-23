@@ -18,6 +18,7 @@ from autoswe.pipeline.artifacts import GeneratedFile
 from autoswe.sandbox.backends import LocalProcessSandbox, RemoteSandbox
 from autoswe.sandbox.models import SandboxLimits, SandboxResult, SandboxStatus
 from autoswe.sandbox.service import RunnerSettings, build_runner_sandbox, create_runner_app
+from autoswe.stacks import Stack
 from tests import sandbox_projects as projects
 
 TOKEN = "runner-test-token-0123456789"
@@ -29,10 +30,14 @@ class RecordingSandbox:
 
     def __init__(self, gate: asyncio.Event | None = None) -> None:
         self.runs: list[list[str]] = []
+        self.stacks: list[Stack] = []
         self.gate = gate
 
-    async def run(self, files: Sequence[GeneratedFile]) -> SandboxResult:
+    async def run(
+        self, files: Sequence[GeneratedFile], stack: Stack = Stack.PYTHON
+    ) -> SandboxResult:
         self.runs.append([f.path for f in files])
+        self.stacks.append(stack)
         if self.gate is not None:
             await self.gate.wait()
         return SandboxResult(status=SandboxStatus.PASSED, backend="fake", isolation="test")
@@ -224,3 +229,26 @@ async def test_remote_client_sends_the_token_and_files() -> None:
     assert result.status is SandboxStatus.PASSED
     assert captured["auth"] == f"Bearer {TOKEN}"
     assert {f["path"] for f in captured["body"]["files"]} >= {"app/calc.py", "tests/test_calc.py"}
+
+
+async def test_the_stack_is_a_profile_name_not_an_image() -> None:
+    fake = RecordingSandbox()
+    async with _client(create_runner_app(_settings(), sandbox=fake)) as client:
+        ok = await client.post("/v1/runs", json={**_body(), "stack": "go"}, headers=AUTH)
+        assert ok.status_code == 200
+        for stack in ("cobol", "golang:latest", "../go"):
+            bad = await client.post("/v1/runs", json={**_body(), "stack": stack}, headers=AUTH)
+            assert bad.status_code == 422, stack
+    assert fake.stacks == [Stack.GO]
+
+
+async def test_remote_client_sends_the_stack() -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        captured.update(json.loads(request.content))
+        ok = SandboxResult(status=SandboxStatus.PASSED, backend="docker", isolation="i")
+        return httpx2.Response(200, json=ok.model_dump(mode="json"))
+
+    await _remote(handler).run(projects.passing(), Stack.TYPESCRIPT)
+    assert captured["stack"] == "typescript"

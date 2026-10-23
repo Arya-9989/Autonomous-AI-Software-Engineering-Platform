@@ -4,9 +4,9 @@
  "source": "offline-provider",
  "provenance": "Synthesized by AutoSWE's deterministic offline provider (heuristics and templates). This is NOT output from Claude or any other model; it exercises the harness and pins the offline pipeline's behaviour. Re-record with --source anthropic for model output.",
  "model": "offline-templates-v1",
- "recorded_at": "2026-10-22T21:27:51Z",
+ "recorded_at": "2026-10-22T23:49:13Z",
  "autoswe_version": "0.1.0",
- "sandbox": "local",
+ "sandbox": "docker",
  "calls": [
   {
    "agent": "analyst",
@@ -66,7 +66,7 @@
   },
   {
    "agent": "architect",
-   "request_sha256": "9bf9595bd9fd8ee527da0a797ce93d1b5d53499e6104511db9a09894dfaabe18",
+   "request_sha256": "f8fd0a2bb84493a846c0977c0e01834b01dc97f340f1ed05ebb2dd477c769fcd",
    "model": "offline-templates-v1",
    "usage": {},
    "output": {
@@ -316,7 +316,7 @@
      {
       "path": "Dockerfile",
       "content": "# syntax=docker/dockerfile:1.7\nFROM python:3.12-slim AS build\nENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1\nWORKDIR /src\nRUN python -m venv /opt/venv\nENV PATH=/opt/venv/bin:$PATH\nCOPY pyproject.toml README.md ./\nCOPY app ./app\nRUN pip install .\n\nFROM python:3.12-slim AS runtime\nENV PATH=/opt/venv/bin:$PATH PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1\nRUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin app\nCOPY --from=build /opt/venv /opt/venv\nWORKDIR /home/app\nUSER 10001\nEXPOSE 8000\nHEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \\\n  CMD [\"python\", \"-c\", \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)\"]\nCMD [\"uvicorn\", \"app.main:app\", \"--host\", \"0.0.0.0\", \"--port\", \"8000\"]\n",
-      "description": "Multi-stage, non-root image with a health check"
+      "description": "Non-root image with a health check"
      },
      {
       "path": ".dockerignore",
@@ -326,7 +326,7 @@
      {
       "path": ".github/workflows/ci.yml",
       "content": "name: CI\n\non:\n  push:\n    branches: [main]\n  pull_request:\n\npermissions:\n  contents: read\n\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - uses: actions/setup-python@v7\n        with:\n          python-version: \"3.12\"\n          cache: pip\n      - name: Install\n        run: pip install -e . pytest httpx2 ruff\n      - name: Lint\n        run: ruff check .\n      - name: Test\n        run: pytest -q\n\n  image:\n    runs-on: ubuntu-latest\n    needs: test\n    steps:\n      - uses: actions/checkout@v7\n      - uses: docker/setup-buildx-action@v4\n      - name: Build image\n        uses: docker/build-push-action@v7\n        with:\n          context: .\n          push: false\n          tags: expenses-service:${{ github.sha }}\n",
-      "description": "Lint, test and image build on every push"
+      "description": "Lint, type check, test and image build on every push"
      },
      {
       "path": "deploy/k8s/deployment.yaml",

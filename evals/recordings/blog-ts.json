@@ -1,0 +1,473 @@
+{
+ "format_version": 1,
+ "fixture": "blog-ts",
+ "source": "offline-provider",
+ "provenance": "Synthesized by AutoSWE's deterministic offline provider (heuristics and templates). This is NOT output from Claude or any other model; it exercises the harness and pins the offline pipeline's behaviour. Re-record with --source anthropic for model output.",
+ "model": "offline-templates-v1",
+ "recorded_at": "2026-10-22T23:48:47Z",
+ "autoswe_version": "0.1.0",
+ "sandbox": "docker",
+ "calls": [
+  {
+   "agent": "analyst",
+   "request_sha256": "82738cbcb196df855267b40e8395e901b76b4b569fcaabf53edcb8437992c71b",
+   "model": "offline-templates-v1",
+   "usage": {},
+   "output": {
+    "project_name": "posts-service",
+    "summary": "A blogging backend.",
+    "user_stories": [
+     "As an API client, I can manage posts (create, list, view, update, delete).",
+     "As an API client, I can manage comments (create, list, view, update, delete)."
+    ],
+    "functional_requirements": [
+     "A blogging backend.",
+     "Entities: Post(title, body:text, published:bool, published_at?:datetime), Comment(author, body:text, approved:bool)",
+     "Expose create, read, update, delete and paginated list operations for posts.",
+     "Expose create, read, update, delete and paginated list operations for comments."
+    ],
+    "non_functional_requirements": [
+     "Ship as a non-root container image with a health check.",
+     "Every change runs lint, tests and an image build in CI.",
+     "Configuration comes from environment variables (12-factor)."
+    ],
+    "entities": [
+     {
+      "name": "Post",
+      "description": "Post records.",
+      "fields": [
+       {
+        "name": "title",
+        "type": "string",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "body",
+        "type": "text",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "published",
+        "type": "boolean",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "published_at",
+        "type": "datetime",
+        "required": false,
+        "description": ""
+       }
+      ]
+     },
+     {
+      "name": "Comment",
+      "description": "Comment records.",
+      "fields": [
+       {
+        "name": "author",
+        "type": "string",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "body",
+        "type": "text",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "approved",
+        "type": "boolean",
+        "required": true,
+        "description": ""
+       }
+      ]
+     }
+    ],
+    "assumptions": [
+     "Single-tenant HTTP JSON API.",
+     "SQLite for local development, PostgreSQL in production via DATABASE_URL."
+    ],
+    "out_of_scope": [
+     "A graphical frontend; the deliverable is an HTTP API."
+    ]
+   }
+  },
+  {
+   "agent": "architect",
+   "request_sha256": "8089c7a2556b9864d549f3504c8247847418fe0ad4a7f2d58c4bf51d452e24d8",
+   "model": "offline-templates-v1",
+   "usage": {},
+   "output": {
+    "style": "Single-process HTTP service with in-memory storage",
+    "overview": "A blogging backend. The service is written in TypeScript 5 on Node.js 24 using only its standard library. Each entity has a typed model, input validation and CRUD handlers; data is held in memory, so it runs as one replica until a database replaces the store.",
+    "components": [
+     {
+      "name": "HTTP API",
+      "responsibility": "Routing, request validation and JSON serialisation",
+      "technology": "node:http with a small typed router",
+      "depends_on": [
+       "Store"
+      ]
+     },
+     {
+      "name": "Store",
+      "responsibility": "Thread-safe in-memory storage per entity",
+      "technology": "Standard library collections",
+      "depends_on": []
+     },
+     {
+      "name": "Delivery pipeline",
+      "responsibility": "Lint, type check, test, build and publish the image",
+      "technology": "GitHub Actions + Docker",
+      "depends_on": [
+       "HTTP API"
+      ]
+     }
+    ],
+    "entities": [
+     {
+      "name": "Post",
+      "description": "Post records.",
+      "fields": [
+       {
+        "name": "title",
+        "type": "string",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "body",
+        "type": "text",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "published",
+        "type": "boolean",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "published_at",
+        "type": "datetime",
+        "required": false,
+        "description": ""
+       }
+      ]
+     },
+     {
+      "name": "Comment",
+      "description": "Comment records.",
+      "fields": [
+       {
+        "name": "author",
+        "type": "string",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "body",
+        "type": "text",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "approved",
+        "type": "boolean",
+        "required": true,
+        "description": ""
+       }
+      ]
+     }
+    ],
+    "endpoints": [
+     {
+      "method": "GET",
+      "path": "/healthz",
+      "summary": "Liveness probe",
+      "entity": null
+     },
+     {
+      "method": "GET",
+      "path": "/posts",
+      "summary": "List posts",
+      "entity": "Post"
+     },
+     {
+      "method": "POST",
+      "path": "/posts",
+      "summary": "Create a post",
+      "entity": "Post"
+     },
+     {
+      "method": "GET",
+      "path": "/posts/{post_id}",
+      "summary": "Get one post",
+      "entity": "Post"
+     },
+     {
+      "method": "PATCH",
+      "path": "/posts/{post_id}",
+      "summary": "Update a post",
+      "entity": "Post"
+     },
+     {
+      "method": "DELETE",
+      "path": "/posts/{post_id}",
+      "summary": "Delete a post",
+      "entity": "Post"
+     },
+     {
+      "method": "GET",
+      "path": "/comments",
+      "summary": "List comments",
+      "entity": "Comment"
+     },
+     {
+      "method": "POST",
+      "path": "/comments",
+      "summary": "Create a comment",
+      "entity": "Comment"
+     },
+     {
+      "method": "GET",
+      "path": "/comments/{comment_id}",
+      "summary": "Get one comment",
+      "entity": "Comment"
+     },
+     {
+      "method": "PATCH",
+      "path": "/comments/{comment_id}",
+      "summary": "Update a comment",
+      "entity": "Comment"
+     },
+     {
+      "method": "DELETE",
+      "path": "/comments/{comment_id}",
+      "summary": "Delete a comment",
+      "entity": "Comment"
+     }
+    ],
+    "tech_stack": [
+     {
+      "layer": "Language",
+      "choice": "TypeScript 5 on Node.js 24",
+      "rationale": "Static types with no build step: Node runs the TypeScript directly"
+     },
+     {
+      "layer": "HTTP",
+      "choice": "node:http with a small typed router",
+      "rationale": "No third-party runtime dependencies to audit or update"
+     },
+     {
+      "layer": "Tests",
+      "choice": "node:test with fetch against an ephemeral server",
+      "rationale": "Exercises the real HTTP surface, in process"
+     },
+     {
+      "layer": "Packaging",
+      "choice": "Docker (node:24-slim, non-root)",
+      "rationale": "Reproducible runtime with a small attack surface"
+     },
+     {
+      "layer": "Orchestration",
+      "choice": "Kubernetes Deployment + Service",
+      "rationale": "Rolling updates and probes"
+     },
+     {
+      "layer": "Infrastructure as code",
+      "choice": "Terraform (AWS ECS Fargate)",
+      "rationale": "Declarative, reviewable infrastructure changes"
+     }
+    ],
+    "deployment": {
+     "container_port": 8000,
+     "replicas": 1,
+     "database": "memory",
+     "cloud_target": "aws-ecs-fargate",
+     "environment_variables": [
+      "PORT"
+     ]
+    },
+    "decisions": [
+     {
+      "title": "Standard library only",
+      "decision": "Use no third-party runtime dependencies.",
+      "rationale": "Nothing to install or patch at run time; the scaffold stays small.",
+      "alternatives": [
+       "A web framework (Express, Fastify, chi, gin)"
+      ]
+     },
+     {
+      "title": "In-memory storage",
+      "decision": "Keep data in memory behind a small store interface.",
+      "rationale": "No database to provision for the first version; the store is the seam where a database goes next, and until then it runs as one replica.",
+      "alternatives": [
+       "PostgreSQL from day one",
+       "SQLite"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "agent": "coder",
+   "request_sha256": "8ed14d7da1a0b06072c7c31aa97ae86cd8ab23bb9f7bd788a9e143716b80d30a",
+   "model": "offline-templates-v1",
+   "usage": {},
+   "output": {
+    "files": [
+     {
+      "path": "package.json",
+      "content": "{\n  \"name\": \"posts-service\",\n  \"version\": \"0.1.0\",\n  \"description\": \"A blogging backend.\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"engines\": {\n    \"node\": \">=24\"\n  },\n  \"scripts\": {\n    \"start\": \"node src/server.ts\",\n    \"test\": \"node --test test/*.test.ts\",\n    \"typecheck\": \"tsc --noEmit -p .\",\n    \"lint\": \"eslint .\"\n  },\n  \"devDependencies\": {\n    \"@eslint/js\": \"10.0.1\",\n    \"@types/node\": \"24.19.2\",\n    \"eslint\": \"10.13.0\",\n    \"typescript\": \"6.0.3\",\n    \"typescript-eslint\": \"8.72.0\"\n  }\n}\n",
+      "description": "Package metadata, scripts and development dependencies"
+     },
+     {
+      "path": "tsconfig.json",
+      "content": "{\n  \"compilerOptions\": {\n    \"target\": \"es2024\",\n    \"module\": \"nodenext\",\n    \"moduleResolution\": \"nodenext\",\n    \"strict\": true,\n    \"noEmit\": true,\n    \"allowImportingTsExtensions\": true,\n    \"erasableSyntaxOnly\": true,\n    \"verbatimModuleSyntax\": true,\n    \"noUncheckedIndexedAccess\": true,\n    \"types\": [\n      \"node\"\n    ],\n    \"skipLibCheck\": true\n  },\n  \"include\": [\n    \"src\",\n    \"test\"\n  ]\n}\n",
+      "description": "Strict type checking; Node runs the sources directly"
+     },
+     {
+      "path": "eslint.config.js",
+      "content": "import js from \"@eslint/js\";\nimport tseslint from \"typescript-eslint\";\n\nexport default tseslint.config(js.configs.recommended, ...tseslint.configs.recommended);\n",
+      "description": "ESLint with typescript-eslint's recommended rules"
+     },
+     {
+      "path": "README.md",
+      "content": "# posts-service\n\nA blogging backend.\n\n> Generated by the Autonomous AI Software Engineering Platform (offline provider).\n> Review the code before deploying it anywhere that matters.\n\nTypeScript on Node.js 24 with no runtime dependencies. Data is kept in memory, so run one\nreplica until a database replaces `src/store.ts`.\n\n## Run and test\n\n```bash\nnpm install          # type checker and linter only\nnpm start            # http://localhost:8000\nnpm run lint && npm run typecheck && npm test\n```\n\n## API\n\n| Method | Path | Description |\n| --- | --- | --- |\n| `GET` | `/healthz` | Liveness probe |\n| `GET` | `/posts` | List posts |\n| `POST` | `/posts` | Create a post |\n| `GET` | `/posts/{post_id}` | Get one post |\n| `PATCH` | `/posts/{post_id}` | Update a post |\n| `DELETE` | `/posts/{post_id}` | Delete a post |\n| `GET` | `/comments` | List comments |\n| `POST` | `/comments` | Create a comment |\n| `GET` | `/comments/{comment_id}` | Get one comment |\n| `PATCH` | `/comments/{comment_id}` | Update a comment |\n| `DELETE` | `/comments/{comment_id}` | Delete a comment |\n",
+      "description": "How to run, test and deploy the service"
+     },
+     {
+      "path": "src/validation.ts",
+      "content": "/** Input validation driven by each entity's field list. */\n\nexport type FieldType = \"string\" | \"text\" | \"integer\" | \"float\" | \"boolean\" | \"date\" | \"datetime\";\n\nexport interface FieldSpec {\n  readonly name: string;\n  readonly type: FieldType;\n  readonly required: boolean;\n}\n\nconst DATE = /^\\d{4}-\\d{2}-\\d{2}$/;\n\nfunction accepts(type: FieldType, value: unknown): boolean {\n  switch (type) {\n    case \"string\":\n      return typeof value === \"string\" && value.length <= 255;\n    case \"text\":\n      return typeof value === \"string\";\n    case \"integer\":\n      return Number.isInteger(value);\n    case \"float\":\n      return typeof value === \"number\" && Number.isFinite(value);\n    case \"boolean\":\n      return typeof value === \"boolean\";\n    case \"date\":\n      return typeof value === \"string\" && DATE.test(value) && !Number.isNaN(Date.parse(value));\n    case \"datetime\":\n      return typeof value === \"string\" && !DATE.test(value) && !Number.isNaN(Date.parse(value));\n  }\n}\n\nexport type Validated = { data: Record<string, unknown> } | { errors: string[] };\n\n/** Check a JSON body; `partial` (PATCH) allows any subset of the fields. */\nexport function validate(fields: readonly FieldSpec[], body: unknown, partial: boolean): Validated {\n  if (typeof body !== \"object\" || body === null || Array.isArray(body)) {\n    return { errors: [\"body must be a JSON object\"] };\n  }\n  const input = body as Record<string, unknown>;\n  const errors: string[] = [];\n  const data: Record<string, unknown> = {};\n  const known = new Set(fields.map((field) => field.name));\n  for (const key of Object.keys(input)) {\n    if (!known.has(key)) errors.push(`${key}: unknown field`);\n  }\n  for (const field of fields) {\n    const value = input[field.name];\n    if (value === undefined) {\n      if (field.required && !partial) errors.push(`${field.name}: required`);\n      continue;\n    }\n    if (value === null && !field.required) {\n      data[field.name] = null;\n    } else if (accepts(field.type, value)) {\n      data[field.name] = value;\n    } else {\n      errors.push(`${field.name}: expected ${field.type}`);\n    }\n  }\n  return errors.length > 0 ? { errors } : { data };\n}\n",
+      "description": "Field-driven input validation"
+     },
+     {
+      "path": "src/store.ts",
+      "content": "/** In-memory storage for one entity. Replace it with a database before scaling out. */\n\nexport interface Stored {\n  id: number;\n  created_at: string;\n  [field: string]: unknown;\n}\n\nexport class Store {\n  readonly #items = new Map<number, Stored>();\n  #nextId = 1;\n\n  list(limit: number, offset: number): Stored[] {\n    return [...this.#items.values()].slice(offset, offset + limit);\n  }\n\n  get(id: number): Stored | undefined {\n    return this.#items.get(id);\n  }\n\n  create(data: Record<string, unknown>): Stored {\n    const item: Stored = { ...data, id: this.#nextId++, created_at: new Date().toISOString() };\n    this.#items.set(item.id, item);\n    return item;\n  }\n\n  update(id: number, data: Record<string, unknown>): Stored | undefined {\n    const current = this.#items.get(id);\n    if (current === undefined) return undefined;\n    const updated: Stored = { ...current, ...data, id: current.id, created_at: current.created_at };\n    this.#items.set(id, updated);\n    return updated;\n  }\n\n  delete(id: number): boolean {\n    return this.#items.delete(id);\n  }\n}\n",
+      "description": "In-memory storage per entity"
+     },
+     {
+      "path": "src/models.ts",
+      "content": "/** Entity models: the field lists drive validation; the interfaces document the JSON. */\n\nimport type { FieldSpec } from \"./validation.ts\";\n\nexport interface Post {\n  id: number;\n  title: string;\n  body: string;\n  published: boolean;\n  published_at: string | null;\n  created_at: string;\n}\n\nexport const postFields: readonly FieldSpec[] = [\n  { name: \"title\", type: \"string\", required: true },\n  { name: \"body\", type: \"text\", required: true },\n  { name: \"published\", type: \"boolean\", required: true },\n  { name: \"published_at\", type: \"datetime\", required: false },\n];\n\nexport interface Comment {\n  id: number;\n  author: string;\n  body: string;\n  approved: boolean;\n  created_at: string;\n}\n\nexport const commentFields: readonly FieldSpec[] = [\n  { name: \"author\", type: \"string\", required: true },\n  { name: \"body\", type: \"text\", required: true },\n  { name: \"approved\", type: \"boolean\", required: true },\n];\n",
+      "description": "Entity interfaces and field lists"
+     },
+     {
+      "path": "src/app.ts",
+      "content": "/** The HTTP API: a route table with CRUD handlers for every entity, plus GET /healthz. */\n\nimport type { IncomingMessage, ServerResponse } from \"node:http\";\n\nimport { commentFields, postFields } from \"./models.ts\";\nimport { Store } from \"./store.ts\";\nimport { type FieldSpec, validate } from \"./validation.ts\";\n\nconst MAX_BODY_BYTES = 1_000_000;\n\nexport type Handler = (request: IncomingMessage, response: ServerResponse) => Promise<void>;\n\ninterface Context {\n  readonly request: IncomingMessage;\n  readonly response: ServerResponse;\n  readonly url: URL;\n  readonly params: Readonly<Record<string, string>>;\n}\n\ninterface Route {\n  readonly method: string;\n  readonly path: string;\n  readonly handle: (context: Context) => void | Promise<void>;\n}\n\nfunction send(response: ServerResponse, status: number, body?: unknown): void {\n  if (body === undefined) {\n    response.writeHead(status).end();\n    return;\n  }\n  response.writeHead(status, { \"content-type\": \"application/json\" }).end(JSON.stringify(body));\n}\n\nclass BodyError extends Error {\n  readonly status: number;\n\n  constructor(status: number, message: string) {\n    super(message);\n    this.status = status;\n  }\n}\n\nasync function readJson(request: IncomingMessage): Promise<unknown> {\n  let size = 0;\n  const chunks: Buffer[] = [];\n  for await (const chunk of request) {\n    const buffer = chunk as Buffer;\n    size += buffer.length;\n    if (size > MAX_BODY_BYTES) throw new BodyError(413, \"Body too large\");\n    chunks.push(buffer);\n  }\n  try {\n    return JSON.parse(Buffer.concat(chunks).toString(\"utf8\"));\n  } catch {\n    throw new BodyError(422, \"Invalid JSON\");\n  }\n}\n\n/** Matches \"/books/{id}\" against \"/books/7\" and returns { id: \"7\" }, or undefined. */\nfunction match(pattern: string, pathname: string): Record<string, string> | undefined {\n  const want = pattern.split(\"/\").filter(Boolean);\n  const got = pathname.split(\"/\").filter(Boolean);\n  if (want.length !== got.length) return undefined;\n  const params: Record<string, string> = {};\n  for (const [index, part] of want.entries()) {\n    const value = got[index] ?? \"\";\n    if (part.startsWith(\"{\") && part.endsWith(\"}\")) params[part.slice(1, -1)] = decodeURIComponent(value);\n    else if (part !== value) return undefined;\n  }\n  return params;\n}\n\nfunction router(routes: readonly Route[]): Handler {\n  return async (request, response) => {\n    const url = new URL(request.url ?? \"/\", \"http://localhost\");\n    const method = request.method ?? \"GET\";\n    let pathMatched = false;\n    for (const route of routes) {\n      const params = match(route.path, url.pathname);\n      if (params === undefined) continue;\n      pathMatched = true;\n      if (route.method !== method) continue;\n      try {\n        await route.handle({ request, response, url, params });\n      } catch (error) {\n        if (!(error instanceof BodyError)) throw error;\n        send(response, error.status, { detail: error.message });\n      }\n      return;\n    }\n    send(response, pathMatched ? 405 : 404, { detail: pathMatched ? \"Method not allowed\" : \"Not found\" });\n  };\n}\n\nfunction page(url: URL): { limit: number; offset: number } | undefined {\n  const limit = Number(url.searchParams.get(\"limit\") ?? \"50\");\n  const offset = Number(url.searchParams.get(\"offset\") ?? \"0\");\n  if (!Number.isInteger(limit) || limit < 1 || limit > 200) return undefined;\n  if (!Number.isInteger(offset) || offset < 0) return undefined;\n  return { limit, offset };\n}\n\nfunction idOf(params: Readonly<Record<string, string>>): number | undefined {\n  const raw = params.id ?? \"\";\n  const id = Number(raw);\n  return /^[1-9][0-9]*$/.test(raw) && Number.isSafeInteger(id) ? id : undefined;\n}\n\n/** CRUD handlers for one entity, over its own in-memory store. */\nfunction resource(label: string, fields: readonly FieldSpec[]) {\n  const store = new Store();\n  const notFound = { detail: `${label} not found` };\n  return {\n    list: ({ response, url }: Context) => {\n      const window = page(url);\n      if (window === undefined) send(response, 422, { detail: [\"limit or offset out of range\"] });\n      else send(response, 200, store.list(window.limit, window.offset));\n    },\n    create: async ({ request, response }: Context) => {\n      const checked = validate(fields, await readJson(request), false);\n      if (\"errors\" in checked) send(response, 422, { detail: checked.errors });\n      else send(response, 201, store.create(checked.data));\n    },\n    get: ({ response, params }: Context) => {\n      const id = idOf(params);\n      const item = id === undefined ? undefined : store.get(id);\n      if (item === undefined) send(response, 404, notFound);\n      else send(response, 200, item);\n    },\n    update: async ({ request, response, params }: Context) => {\n      const id = idOf(params);\n      if (id === undefined) {\n        send(response, 404, notFound);\n        return;\n      }\n      const checked = validate(fields, await readJson(request), true);\n      if (\"errors\" in checked) {\n        send(response, 422, { detail: checked.errors });\n        return;\n      }\n      const item = store.update(id, checked.data);\n      if (item === undefined) send(response, 404, notFound);\n      else send(response, 200, item);\n    },\n    remove: ({ response, params }: Context) => {\n      const id = idOf(params);\n      if (id !== undefined && store.delete(id)) send(response, 204);\n      else send(response, 404, notFound);\n    },\n  };\n}\n\nexport function createApp(): Handler {\n  const posts = resource(\"Post\", postFields);\n  const comments = resource(\"Comment\", commentFields);\n  return router([\n    { method: \"GET\", path: \"/healthz\", handle: ({ response }) => send(response, 200, { status: \"ok\" }) },\n    { method: \"GET\", path: \"/posts\", handle: posts.list },\n    { method: \"POST\", path: \"/posts\", handle: posts.create },\n    { method: \"GET\", path: \"/posts/{id}\", handle: posts.get },\n    { method: \"PATCH\", path: \"/posts/{id}\", handle: posts.update },\n    { method: \"DELETE\", path: \"/posts/{id}\", handle: posts.remove },\n    { method: \"GET\", path: \"/comments\", handle: comments.list },\n    { method: \"POST\", path: \"/comments\", handle: comments.create },\n    { method: \"GET\", path: \"/comments/{id}\", handle: comments.get },\n    { method: \"PATCH\", path: \"/comments/{id}\", handle: comments.update },\n    { method: \"DELETE\", path: \"/comments/{id}\", handle: comments.remove },\n  ]);\n}\n",
+      "description": "HTTP routing and CRUD handlers"
+     },
+     {
+      "path": "src/server.ts",
+      "content": "import { createServer } from \"node:http\";\n\nimport { createApp } from \"./app.ts\";\n\nconst port = Number(process.env.PORT ?? \"8000\");\ncreateServer(createApp()).listen(port, () => {\n  console.log(`listening on :${port}`);\n});\n",
+      "description": "Process entry point"
+     },
+     {
+      "path": "test/server.ts",
+      "content": "/** Starts the app on an ephemeral port for one test file; each file gets a fresh store. */\n\nimport { createServer, type Server } from \"node:http\";\nimport type { AddressInfo } from \"node:net\";\n\nimport { createApp } from \"../src/app.ts\";\n\nexport interface Running {\n  readonly url: string;\n  close(): Promise<void>;\n}\n\nexport async function start(): Promise<Running> {\n  const server: Server = createServer(createApp());\n  await new Promise<void>((resolve) => server.listen(0, \"127.0.0.1\", resolve));\n  const { port } = server.address() as AddressInfo;\n  return {\n    url: `http://127.0.0.1:${port}`,\n    close: () => new Promise<void>((resolve) => server.close(() => resolve())),\n  };\n}\n\nexport async function json(response: Response): Promise<Record<string, unknown>> {\n  return (await response.json()) as Record<string, unknown>;\n}\n\nexport function post(url: string, body: unknown): Promise<Response> {\n  return fetch(url, { method: \"POST\", headers: { \"content-type\": \"application/json\" }, body: JSON.stringify(body) });\n}\n\nexport function patch(url: string, body: unknown): Promise<Response> {\n  return fetch(url, { method: \"PATCH\", headers: { \"content-type\": \"application/json\" }, body: JSON.stringify(body) });\n}\n",
+      "description": "Test helpers: an app on an ephemeral port"
+     },
+     {
+      "path": "test/health.test.ts",
+      "content": "import assert from \"node:assert/strict\";\nimport { after, before, it } from \"node:test\";\n\nimport { json, type Running, start } from \"./server.ts\";\n\nlet app: Running;\nbefore(async () => {\n  app = await start();\n});\nafter(() => app.close());\n\nit(\"reports healthy\", async () => {\n  const response = await fetch(`${app.url}/healthz`);\n  assert.equal(response.status, 200);\n  assert.deepEqual(await json(response), { status: \"ok\" });\n});\n",
+      "description": "Health endpoint test"
+     },
+     {
+      "path": "test/posts.test.ts",
+      "content": "import assert from \"node:assert/strict\";\nimport { after, before, describe, it } from \"node:test\";\n\nimport { json, patch, post, type Running, start } from \"./server.ts\";\n\nconst PAYLOAD = { title: \"example title\", body: \"Some longer body text.\", published: true, published_at: \"2025-01-15T09:30:00Z\" };\n\ndescribe(\"/posts\", () => {\n  let app: Running;\n  before(async () => {\n    app = await start();\n  });\n  after(() => app.close());\n\n  it(\"creates and reads one\", async () => {\n    const response = await post(`${app.url}/posts`, PAYLOAD);\n    assert.equal(response.status, 201);\n    const created = await json(response);\n    assert.equal(created.title, PAYLOAD.title);\n    assert.equal(created.body, PAYLOAD.body);\n    assert.equal(created.published, PAYLOAD.published);\n    const fetched = await fetch(`${app.url}/posts/${created.id}`);\n    assert.equal(fetched.status, 200);\n    assert.equal((await json(fetched)).id, created.id);\n  });\n\n  it(\"lists with limit and offset\", async () => {\n    for (let i = 0; i < 3; i++) {\n      assert.equal((await post(`${app.url}/posts`, PAYLOAD)).status, 201);\n    }\n    const page = await fetch(`${app.url}/posts?limit=2&offset=1`);\n    assert.equal(page.status, 200);\n    assert.equal(((await page.json()) as unknown[]).length, 2);\n    assert.equal((await fetch(`${app.url}/posts?limit=0`)).status, 422);\n  });\n\n  it(\"updates one\", async () => {\n    const created = await json(await post(`${app.url}/posts`, PAYLOAD));\n    const response = await patch(`${app.url}/posts/${created.id}`, { title: \"updated title\" });\n    assert.equal(response.status, 200);\n    assert.equal((await json(response)).title, \"updated title\");\n  });\n\n  it(\"deletes one\", async () => {\n    const created = await json(await post(`${app.url}/posts`, PAYLOAD));\n    const deleted = await fetch(`${app.url}/posts/${created.id}`, { method: \"DELETE\" });\n    assert.equal(deleted.status, 204);\n    assert.equal((await fetch(`${app.url}/posts/${created.id}`)).status, 404);\n  });\n\n  it(\"answers 404 for an unknown id\", async () => {\n    assert.equal((await fetch(`${app.url}/posts/999999`)).status, 404);\n    assert.equal((await fetch(`${app.url}/posts/not-a-number`)).status, 404);\n  });\n\n  it(\"rejects invalid input with 422\", async () => {\n    assert.equal((await post(`${app.url}/posts`, { unknown_field: 1 })).status, 422);\n    assert.equal((await post(`${app.url}/posts`, {})).status, 422);\n  });\n});\n",
+      "description": "API tests for posts"
+     },
+     {
+      "path": "test/comments.test.ts",
+      "content": "import assert from \"node:assert/strict\";\nimport { after, before, describe, it } from \"node:test\";\n\nimport { json, patch, post, type Running, start } from \"./server.ts\";\n\nconst PAYLOAD = { author: \"example author\", body: \"Some longer body text.\", approved: true };\n\ndescribe(\"/comments\", () => {\n  let app: Running;\n  before(async () => {\n    app = await start();\n  });\n  after(() => app.close());\n\n  it(\"creates and reads one\", async () => {\n    const response = await post(`${app.url}/comments`, PAYLOAD);\n    assert.equal(response.status, 201);\n    const created = await json(response);\n    assert.equal(created.author, PAYLOAD.author);\n    assert.equal(created.body, PAYLOAD.body);\n    assert.equal(created.approved, PAYLOAD.approved);\n    const fetched = await fetch(`${app.url}/comments/${created.id}`);\n    assert.equal(fetched.status, 200);\n    assert.equal((await json(fetched)).id, created.id);\n  });\n\n  it(\"lists with limit and offset\", async () => {\n    for (let i = 0; i < 3; i++) {\n      assert.equal((await post(`${app.url}/comments`, PAYLOAD)).status, 201);\n    }\n    const page = await fetch(`${app.url}/comments?limit=2&offset=1`);\n    assert.equal(page.status, 200);\n    assert.equal(((await page.json()) as unknown[]).length, 2);\n    assert.equal((await fetch(`${app.url}/comments?limit=0`)).status, 422);\n  });\n\n  it(\"updates one\", async () => {\n    const created = await json(await post(`${app.url}/comments`, PAYLOAD));\n    const response = await patch(`${app.url}/comments/${created.id}`, { author: \"updated author\" });\n    assert.equal(response.status, 200);\n    assert.equal((await json(response)).author, \"updated author\");\n  });\n\n  it(\"deletes one\", async () => {\n    const created = await json(await post(`${app.url}/comments`, PAYLOAD));\n    const deleted = await fetch(`${app.url}/comments/${created.id}`, { method: \"DELETE\" });\n    assert.equal(deleted.status, 204);\n    assert.equal((await fetch(`${app.url}/comments/${created.id}`)).status, 404);\n  });\n\n  it(\"answers 404 for an unknown id\", async () => {\n    assert.equal((await fetch(`${app.url}/comments/999999`)).status, 404);\n    assert.equal((await fetch(`${app.url}/comments/not-a-number`)).status, 404);\n  });\n\n  it(\"rejects invalid input with 422\", async () => {\n    assert.equal((await post(`${app.url}/comments`, { unknown_field: 1 })).status, 422);\n    assert.equal((await post(`${app.url}/comments`, {})).status, 422);\n  });\n});\n",
+      "description": "API tests for comments"
+     }
+    ],
+    "notes": "Rendered from offline templates."
+   }
+  },
+  {
+   "agent": "devops",
+   "request_sha256": "e0f541faf429c7e2681c46690ce0f82562167d3ddf4aa10aedf79de15267617e",
+   "model": "offline-templates-v1",
+   "usage": {},
+   "output": {
+    "files": [
+     {
+      "path": "Dockerfile",
+      "content": "# syntax=docker/dockerfile:1.7\n# Node runs the TypeScript sources directly; the image needs no build step and no\n# node_modules (the project has no runtime dependencies).\nFROM node:24-slim\nENV NODE_ENV=production PORT=8000\nWORKDIR /app\nCOPY package.json ./\nCOPY src ./src\nUSER 10001\nEXPOSE 8000\nHEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \\\n  CMD [\"node\", \"-e\", \"fetch('http://127.0.0.1:8000/healthz').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))\"]\nCMD [\"node\", \"src/server.ts\"]\n",
+      "description": "Non-root image with a health check"
+     },
+     {
+      "path": ".dockerignore",
+      "content": ".git\n.github\nnode_modules/\ndeploy/\ntest/\n",
+      "description": "Keeps the build context small"
+     },
+     {
+      "path": ".github/workflows/ci.yml",
+      "content": "name: CI\n\non:\n  push:\n    branches: [main]\n  pull_request:\n\npermissions:\n  contents: read\n\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - uses: actions/setup-node@v7\n        with:\n          node-version: \"24\"\n      - name: Install the type checker and linter\n        run: npm install --no-audit --no-fund\n      - name: Lint\n        run: npm run lint\n      - name: Type check\n        run: npm run typecheck\n      - name: Test\n        run: npm test\n\n  image:\n    runs-on: ubuntu-latest\n    needs: test\n    steps:\n      - uses: actions/checkout@v7\n      - uses: docker/setup-buildx-action@v4\n      - name: Build image\n        uses: docker/build-push-action@v7\n        with:\n          context: .\n          push: false\n          tags: posts-service:${{ github.sha }}\n",
+      "description": "Lint, type check, test and image build on every push"
+     },
+     {
+      "path": "deploy/k8s/deployment.yaml",
+      "content": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: posts-service\n  labels:\n    app.kubernetes.io/name: posts-service\nspec:\n  replicas: 1\n  selector:\n    matchLabels:\n      app.kubernetes.io/name: posts-service\n  template:\n    metadata:\n      labels:\n        app.kubernetes.io/name: posts-service\n    spec:\n      securityContext:\n        runAsNonRoot: true\n        runAsUser: 10001\n        seccompProfile:\n          type: RuntimeDefault\n      containers:\n        - name: api\n          image: posts-service:latest\n          imagePullPolicy: IfNotPresent\n          ports:\n            - name: http\n              containerPort: 8000\n          env:\n            - name: DATABASE_URL\n              valueFrom:\n                secretKeyRef:\n                  name: posts-service-database\n                  key: url\n                  optional: true\n          readinessProbe:\n            httpGet:\n              path: /healthz\n              port: http\n            periodSeconds: 10\n          livenessProbe:\n            httpGet:\n              path: /healthz\n              port: http\n            initialDelaySeconds: 10\n            periodSeconds: 20\n          resources:\n            requests:\n              cpu: 100m\n              memory: 128Mi\n            limits:\n              cpu: 500m\n              memory: 256Mi\n          securityContext:\n            allowPrivilegeEscalation: false\n            capabilities:\n              drop: [ALL]\n",
+      "description": "Deployment with probes, limits and a restricted security context"
+     },
+     {
+      "path": "deploy/k8s/service.yaml",
+      "content": "apiVersion: v1\nkind: Service\nmetadata:\n  name: posts-service\n  labels:\n    app.kubernetes.io/name: posts-service\nspec:\n  selector:\n    app.kubernetes.io/name: posts-service\n  ports:\n    - name: http\n      port: 80\n      targetPort: http\n",
+      "description": "ClusterIP service"
+     },
+     {
+      "path": "deploy/k8s/kustomization.yaml",
+      "content": "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nlabels:\n  - pairs:\n      app.kubernetes.io/part-of: posts-service\nresources:\n  - deployment.yaml\n  - service.yaml\n",
+      "description": "Kustomize entry point"
+     },
+     {
+      "path": "deploy/terraform/versions.tf",
+      "content": "terraform {\n  required_version = \">= 1.6\"\n  required_providers {\n    aws = {\n      source  = \"hashicorp/aws\"\n      version = \"~> 5.0\"\n    }\n  }\n}\n\nprovider \"aws\" {\n  region = var.region\n}\n",
+      "description": "Terraform and provider constraints"
+     },
+     {
+      "path": "deploy/terraform/variables.tf",
+      "content": "variable \"region\" {\n  description = \"AWS region to deploy into\"\n  type        = string\n  default     = \"us-east-1\"\n}\n\nvariable \"name\" {\n  description = \"Name prefix for every resource\"\n  type        = string\n  default     = \"posts-service\"\n}\n\nvariable \"image_tag\" {\n  description = \"Immutable image tag in the ECR repository to run (e.g. a git SHA)\"\n  type        = string\n}\n\nvariable \"vpc_id\" {\n  description = \"VPC the service runs in\"\n  type        = string\n}\n\nvariable \"subnet_ids\" {\n  description = \"Private subnets for the Fargate tasks\"\n  type        = list(string)\n}\n\nvariable \"container_port\" {\n  description = \"Port the container listens on\"\n  type        = number\n  default     = 8000\n}\n\nvariable \"desired_count\" {\n  description = \"Number of running tasks\"\n  type        = number\n  default     = 1\n}\n\nvariable \"database_url_secret_arn\" {\n  description = \"Optional Secrets Manager ARN holding DATABASE_URL\"\n  type        = string\n  default     = \"\"\n}\n",
+      "description": "Inputs: region, VPC, subnets, image tag"
+     },
+     {
+      "path": "deploy/terraform/main.tf",
+      "content": "locals {\n  secrets = var.database_url_secret_arn == \"\" ? [] : [\n    { name = \"DATABASE_URL\", valueFrom = var.database_url_secret_arn }\n  ]\n}\n\nresource \"aws_ecr_repository\" \"app\" {\n  name                 = var.name\n  image_tag_mutability = \"IMMUTABLE\"\n\n  image_scanning_configuration {\n    scan_on_push = true\n  }\n}\n\nresource \"aws_cloudwatch_log_group\" \"app\" {\n  name              = \"/ecs/${var.name}\"\n  retention_in_days = 30\n}\n\nresource \"aws_ecs_cluster\" \"this\" {\n  name = var.name\n\n  setting {\n    name  = \"containerInsights\"\n    value = \"enabled\"\n  }\n}\n\ndata \"aws_iam_policy_document\" \"ecs_tasks_assume\" {\n  statement {\n    actions = [\"sts:AssumeRole\"]\n    principals {\n      type        = \"Service\"\n      identifiers = [\"ecs-tasks.amazonaws.com\"]\n    }\n  }\n}\n\nresource \"aws_iam_role\" \"execution\" {\n  name               = \"${var.name}-execution\"\n  assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json\n}\n\nresource \"aws_iam_role_policy_attachment\" \"execution\" {\n  role       = aws_iam_role.execution.name\n  policy_arn = \"arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy\"\n}\n\nresource \"aws_security_group\" \"service\" {\n  name        = \"${var.name}-service\"\n  description = \"Ingress to the ${var.name} tasks\"\n  vpc_id      = var.vpc_id\n\n  ingress {\n    description = \"HTTP from inside the VPC\"\n    from_port   = var.container_port\n    to_port     = var.container_port\n    protocol    = \"tcp\"\n    cidr_blocks = [\"10.0.0.0/8\"]\n  }\n\n  egress {\n    description = \"Outbound HTTPS and database traffic\"\n    from_port   = 0\n    to_port     = 0\n    protocol    = \"-1\"\n    cidr_blocks = [\"0.0.0.0/0\"]\n  }\n}\n\nresource \"aws_ecs_task_definition\" \"app\" {\n  family                   = var.name\n  requires_compatibilities = [\"FARGATE\"]\n  network_mode             = \"awsvpc\"\n  cpu                      = 256\n  memory                   = 512\n  execution_role_arn       = aws_iam_role.execution.arn\n\n  container_definitions = jsonencode([\n    {\n      name         = \"api\"\n      image        = \"${aws_ecr_repository.app.repository_url}:${var.image_tag}\"\n      essential    = true\n      portMappings = [{ containerPort = var.container_port, protocol = \"tcp\" }]\n      secrets      = local.secrets\n      logConfiguration = {\n        logDriver = \"awslogs\"\n        options = {\n          awslogs-group         = aws_cloudwatch_log_group.app.name\n          awslogs-region        = var.region\n          awslogs-stream-prefix = \"api\"\n        }\n      }\n    }\n  ])\n}\n\nresource \"aws_ecs_service\" \"app\" {\n  name            = var.name\n  cluster         = aws_ecs_cluster.this.id\n  task_definition = aws_ecs_task_definition.app.arn\n  desired_count   = var.desired_count\n  launch_type     = \"FARGATE\"\n\n  network_configuration {\n    subnets          = var.subnet_ids\n    security_groups  = [aws_security_group.service.id]\n    assign_public_ip = false\n  }\n\n  deployment_circuit_breaker {\n    enable   = true\n    rollback = true\n  }\n}\n",
+      "description": "ECR repository, ECS cluster, task definition and service"
+     },
+     {
+      "path": "deploy/terraform/outputs.tf",
+      "content": "output \"ecr_repository_url\" {\n  description = \"Push the image here\"\n  value       = aws_ecr_repository.app.repository_url\n}\n\noutput \"ecs_service_name\" {\n  description = \"Name of the ECS service\"\n  value       = aws_ecs_service.app.name\n}\n",
+      "description": "Repository URL and service name"
+     }
+    ],
+    "notes": ""
+   }
+  },
+  {
+   "agent": "reviewer",
+   "request_sha256": "d850ab79655b9267508c96550eceeeaa58e9437518ec807f2e71f86a8304b67a",
+   "model": "offline-templates-v1",
+   "usage": {},
+   "output": {
+    "summary": "Deterministic review of 26 files: the project passes all structural checks with 0 warning(s). All 13 generated tests pass in the sandbox. Offline reviews do not judge business logic.",
+    "score": 100,
+    "findings": [
+     {
+      "severity": "info",
+      "file": null,
+      "message": "Data is kept in memory: it is lost on restart and not shared between replicas.",
+      "suggestion": "Put a database behind the store module before running more than one replica."
+     }
+    ]
+   }
+  }
+ ]
+}

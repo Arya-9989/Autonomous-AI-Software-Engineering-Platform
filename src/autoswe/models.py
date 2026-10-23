@@ -100,6 +100,7 @@ class Job(Base):
     title: Mapped[str] = mapped_column(String(200))
     spec: Mapped[str] = mapped_column(Text)
     provider: Mapped[str] = mapped_column(String(32))
+    stack: Mapped[str] = mapped_column(String(16), default="python", server_default="python")
     model: Mapped[str | None] = mapped_column(String(128))
     status: Mapped[JobStatus] = mapped_column(_enum(JobStatus), default=JobStatus.QUEUED)
     current_stage: Mapped[str | None] = mapped_column(String(32))

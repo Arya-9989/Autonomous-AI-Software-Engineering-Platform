@@ -81,7 +81,7 @@ class DecisionRecord(_Model):
 class DeploymentPlan(_Model):
     container_port: int
     replicas: int
-    database: Literal["sqlite", "postgres"]
+    database: Literal["sqlite", "postgres", "memory"]
     cloud_target: str = Field(description="Where the Terraform targets, e.g. 'aws-ecs-fargate'")
     environment_variables: list[str]
 

@@ -136,3 +136,28 @@ def recall(expected: Iterable[str], actual: set[str]) -> float | None:
     if not wanted:
         return None
     return len(wanted & actual) / len(wanted)
+
+
+# --- TypeScript and Go --------------------------------------------------------------------------
+# Route tables ({ method: "GET", path: "/books/{id}" }), Express-style calls
+# (router.get("/books/:id", ...)) and Go 1.22 ServeMux patterns (mux.HandleFunc("GET /books")).
+_METHODS = "GET|POST|PUT|PATCH|DELETE"
+_TS_TABLE = re.compile(rf'method:\s*"({_METHODS})"\s*,\s*path:\s*"([^"]+)"')
+_TS_CALL = re.compile(r"\b\w+\.(get|post|put|patch|delete)\(\s*[\"'`](/[^\"'`]*)[\"'`]")
+_GO_PATTERN = re.compile(rf'\.Handle(?:Func)?\(\s*"({_METHODS})\s+(/[^"]*)"')
+_COLON_PARAM = re.compile(r":(\w+)")
+
+
+def implemented_endpoints_for(files: Mapping[str, str], stack: str = "python") -> set[str]:
+    """``implemented_endpoints`` for any stack (static reading; nothing is executed)."""
+    if stack == "python":
+        return implemented_endpoints(files)
+    endpoints: set[str] = set()
+    for path, content in files.items():
+        if stack == "typescript" and path.endswith(".ts") and not path.endswith(".test.ts"):
+            for method, route in [*_TS_TABLE.findall(content), *_TS_CALL.findall(content)]:
+                endpoints.add(normalize_endpoint(method, _COLON_PARAM.sub(r"{\1}", route)))
+        elif stack == "go" and path.endswith(".go") and not path.endswith("_test.go"):
+            for method, route in _GO_PATTERN.findall(content):
+                endpoints.add(normalize_endpoint(method, route))
+    return endpoints

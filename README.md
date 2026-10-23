@@ -35,6 +35,12 @@ Animated WebP (479 KB), with a shorter GIF for clients that cannot show WebP.</s
 
 ## Features
 
+- **Three target stacks** ([ADR 0007](docs/adr/0007-more-target-stacks.md)): Python (FastAPI +
+  SQLAlchemy, the default), TypeScript on Node.js 24 and Go 1.27, chosen per job (`"stack"`).
+  Each has its own prompts, offline templates, structural checks and sandbox image that runs its
+  linter, type checker and tests (ruff/mypy/pytest, ESLint/`tsc`/`node --test`,
+  gofmt/`go vet`/`go test`). The TypeScript and Go services use only their standard libraries and
+  keep data in memory, which the architecture and review say plainly.
 - **Five-agent pipeline**: requirements analyst → architect → code generator → DevOps engineer →
   reviewer. Each agent produces a typed Pydantic artifact (requirements, architecture spec, file
   bundle, review report).
@@ -274,6 +280,9 @@ cd library-api && uv run ruff check . && uv run pytest   # uv creates the projec
 
 Add `--sandbox docker` to run the generated tests (and the repair loop) in a sandbox container;
 build its image once with `docker build -f sandbox/Dockerfile -t autoswe-sandbox:local .`.
+`--stack typescript` or `--stack go` generates the other stacks; their sandbox images are
+`sandbox/node/Dockerfile` (`autoswe-sandbox-node:local`) and `sandbox/go/Dockerfile`
+(`autoswe-sandbox-go:local`).
 `--sandbox local` uses a plain subprocess instead: no isolation, for development only.
 
 ## Using Claude
@@ -335,7 +344,8 @@ All settings are environment variables (a `.env` file is read if present).
 | `METRICS_ENABLED` | `true` | Expose `/metrics` |
 | `SANDBOX_BACKEND` | `none` | Where generated tests run: `remote` (the sandbox runner; compose default), `docker` (this process starts containers: root-equivalent, CI and local work only), `local` (subprocess, **not isolated**), `none` |
 | `SANDBOX_RUNNER_URL` / `SANDBOX_RUNNER_TOKEN` | (empty) | The runner's address and shared token (at least 16 characters); required for `remote` |
-| `SANDBOX_IMAGE` | `autoswe-sandbox:local` | Image sandbox containers start from (never pulled at run time) |
+| `SANDBOX_IMAGE` | `autoswe-sandbox:local` | Image Python sandbox containers start from (never pulled at run time) |
+| `SANDBOX_IMAGE_TYPESCRIPT` / `SANDBOX_IMAGE_GO` | `autoswe-sandbox-node:local` / `autoswe-sandbox-go:local` | The TypeScript and Go sandbox images |
 | `SANDBOX_DOCKER_RUNTIME` | (empty) | e.g. `runsc` to run sandbox containers under gVisor |
 | `SANDBOX_TIMEOUT_S` / `SANDBOX_MEMORY_MB` / `SANDBOX_CPUS` / `SANDBOX_PIDS_LIMIT` | `120` / `768` / `1` / `128` | Per-run limits, set by the operator only |
 | `SANDBOX_MAX_REPAIR_ROUNDS` | `2` | Test-repair rounds after a failing sandbox run (0-5) |
@@ -357,7 +367,7 @@ Authenticate with `Authorization: Bearer <key>` or `X-API-Key: <key>`. Interacti
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `POST` | `/api/v1/jobs` | Submit `{spec, title?, provider?}`; returns `202` with the job, or `402` with `code: token_budget_exceeded` when the principal's budget cannot cover the reservation |
+| `POST` | `/api/v1/jobs` | Submit `{spec, title?, provider?, stack?}` (`stack`: `python`, `typescript` or `go`); returns `202` with the job, or `402` with `code: token_budget_exceeded` when the principal's budget cannot cover the reservation |
 | `GET` | `/api/v1/jobs` | Your jobs, newest first (`limit`; page with `before` and `before_id` from `next_cursor` and `next_cursor_id`) |
 | `GET` | `/api/v1/jobs/{id}` | Status, per-stage progress, durations, tokens (cache included), cost, validation and test summaries, `trace_id`, `request_id`, `error_code` |
 | `GET` | `/api/v1/jobs/{id}/events` | **SSE** stream; replays history, follows live, ends with `end` |
@@ -408,6 +418,8 @@ checks. The Kubernetes and ECS deployments in `deploy/` do not run the sandbox r
 
 ```bash
 docker build -f sandbox/Dockerfile -t autoswe-sandbox:local .
+docker build -f sandbox/node/Dockerfile -t autoswe-sandbox-node:local .
+docker build -f sandbox/go/Dockerfile -t autoswe-sandbox-go:local .
 uv run autoswe eval run --sandbox docker          # replay, score, check evals/thresholds.yaml
 uv run autoswe eval run --sandbox local           # without Docker (no isolation)
 ANTHROPIC_API_KEY=sk-ant-... uv run autoswe eval run --live --sandbox docker
@@ -469,6 +481,17 @@ library-api/
 └── deploy/
     ├── k8s/        deployment.yaml, service.yaml, kustomization.yaml
     └── terraform/  ECR + ECS Fargate (versions, variables, main, outputs)
+```
+
+The other stacks share `ARCHITECTURE.md`, `docs/`, `deploy/` and the CI and Docker files (for
+their own toolchain):
+
+```text
+TypeScript: package.json  tsconfig.json  eslint.config.js
+            src/   server.ts, app.ts (route table), models.ts, validation.ts, store.ts
+            test/  <entity>.test.ts, health.test.ts (node:test + fetch on an ephemeral port)
+Go:         go.mod  main.go (-healthcheck flag)  handlers.go (ServeMux patterns)
+            models.go  validation.go  store.go  <entity>_test.go  helpers_test.go (httptest)
 ```
 
 The test suite and CI prove this output works. They run the generated project's own `ruff` and
@@ -599,6 +622,7 @@ src/autoswe/
 │   ├── orchestrator.py         # runs stages, persists progress, emits events
 │   ├── validation.py           # parsers, policy checks, secret scan, path safety
 │   └── prompts.py, docs.py, packaging.py, naming.py
+├── stacks.py                   # target stacks: manifests, test files, sandbox profiles
 ├── sandbox/                    # backends (docker, local, remote), runner service, in-sandbox entry
 ├── evals/                      # eval harness: fixtures, recordings, routes, scoring, report, CLI
 ├── budget.py, metering.py, pricing.py, pricing.toml   # budgets, per-call metering, prices
@@ -606,7 +630,7 @@ src/autoswe/
 ├── llm/
 │   ├── base.py                 # LLMProvider protocol, request/response, typed errors
 │   ├── anthropic_provider.py   # Claude via the official SDK
-│   ├── offline/                # deterministic analysis, blueprint and templates
+│   ├── offline/                # deterministic analysis, blueprint, templates (Python, TS, Go)
 │   └── registry.py
 ├── models.py, repository.py, db.py, migrations/   # SQLAlchemy 2.0 + Alembic
 ├── worker.py, events.py        # DB-backed queue (drains on shutdown), notifier
@@ -618,7 +642,7 @@ frontend/                       # Vite + React + TypeScript + Tailwind UI
 ├── src/landing/                # product page (/), sample.json = one real offline run
 ├── src/app/                    # studio (/app): shell, timeline, activity, command palette
 └── e2e/                        # Playwright + axe tests
-sandbox/                        # sandbox image Dockerfile and its hash-locked requirements
+sandbox/                        # sandbox images: Python (hash-locked), node/ (lockfile), go/ (seed cache)
 evals/                          # eval fixtures, recordings, thresholds
 docs/adr/                       # architecture decision records
 deploy/k8s, deploy/terraform    # deploying the platform itself
@@ -672,7 +696,6 @@ tests/                          # pytest suite
 ## Roadmap (future work, not implemented)
 
 - Relationships between entities and Alembic migrations in generated projects.
-- More target stacks (TypeScript/Node, Go) with matching validators.
 
 ## License
 

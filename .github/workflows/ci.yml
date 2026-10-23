@@ -164,8 +164,11 @@ jobs:
           enable-cache: true
       - name: Install Python 3.12 and locked dependencies
         run: uv sync --locked --python 3.12
-      - name: Build the sandbox image
-        run: docker build -f sandbox/Dockerfile -t autoswe-sandbox:local .
+      - name: Build the sandbox images (Python, TypeScript/Node, Go)
+        run: |
+          docker build -f sandbox/Dockerfile -t autoswe-sandbox:local .
+          docker build -f sandbox/node/Dockerfile -t autoswe-sandbox-node:local .
+          docker build -f sandbox/go/Dockerfile -t autoswe-sandbox-go:local .
       - name: Sandbox tests against real containers (limits and escape attempts)
         env:
           AUTOSWE_REQUIRE_DOCKER: "1"

@@ -109,6 +109,7 @@ async def create_job(
             reservation=reservation,
             request_id=request_id_var.get(),
             trace_context=current_context_carrier(),
+            stack=payload.stack.value,
         )
     except BudgetRefusedError:
         BUDGET_REJECTIONS.labels("submit").inc()

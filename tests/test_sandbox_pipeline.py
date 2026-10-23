@@ -19,6 +19,7 @@ from autoswe.sandbox.models import (
     TestFailure,
     TestSummary,
 )
+from autoswe.stacks import Stack
 from tests import sandbox_projects as projects
 from tests.conftest import ALICE, BOB, HarnessFactory
 from tests.fakes import ScriptedProvider
@@ -50,7 +51,9 @@ class ScriptedSandbox:
         self.results = list(results)
         self.seen: list[dict[str, str]] = []
 
-    async def run(self, files: Sequence[GeneratedFile]) -> SandboxResult:
+    async def run(
+        self, files: Sequence[GeneratedFile], stack: Stack = Stack.PYTHON
+    ) -> SandboxResult:
         self.seen.append({f.path: f.content for f in files})
         return self.results.pop(0) if len(self.results) > 1 else self.results[0]
 

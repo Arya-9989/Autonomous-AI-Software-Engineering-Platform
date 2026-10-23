@@ -26,6 +26,7 @@ from autoswe.pipeline.artifacts import GeneratedFile
 from autoswe.pipeline.validation import Limits, sanitize_files
 from autoswe.sandbox.backends import DockerSandbox, LocalProcessSandbox, Sandbox
 from autoswe.sandbox.models import SandboxResult
+from autoswe.stacks import Stack
 from autoswe.tracing import configure_tracing
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,8 @@ class RunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     files: list[GeneratedFile] = Field(max_length=500)
+    # A profile name, not an image: the runner maps it to its own configured image.
+    stack: Stack = Stack.PYTHON
 
 
 class _Gate:
@@ -74,6 +77,7 @@ def build_runner_sandbox(settings: RunnerSettings) -> Sandbox:
     return DockerSandbox(
         settings.sandbox_image,
         limits,
+        images=settings.sandbox_stack_images(),
         runtime=settings.sandbox_docker_runtime,
         docker=settings.sandbox_docker_binary,
         pool=settings.sandbox_pool,
@@ -155,7 +159,7 @@ def create_runner_app(  # noqa: PLR0915 - the app factory defines its handlers i
                 headers={"Retry-After": "5"},
             )
         try:
-            result = await backend.run(clean)
+            result = await backend.run(clean, payload.stack)
         finally:
             gate.leave()
         logger.info(

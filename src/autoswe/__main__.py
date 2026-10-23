@@ -26,7 +26,9 @@ from autoswe.logging_config import configure_logging
 from autoswe.migrations.runner import upgrade_to_head
 
 
-async def _generate(spec: str, out: Path, provider_name: str | None, sandbox: str | None) -> int:
+async def _generate(
+    spec: str, out: Path, provider_name: str | None, sandbox: str | None, stack: str = "python"
+) -> int:
     # Imported lazily so `serve` does not pay for it.
     from autoswe.llm.registry import build_registry  # noqa: PLC0415
     from autoswe.pipeline.agents import (  # noqa: PLC0415
@@ -37,6 +39,7 @@ async def _generate(spec: str, out: Path, provider_name: str | None, sandbox: st
         run_pipeline,
     )
     from autoswe.sandbox.factory import build_sandbox  # noqa: PLC0415
+    from autoswe.stacks import Stack  # noqa: PLC0415
 
     # Local, one-shot run: API authentication does not apply.
     overrides: dict[str, Any] = {"auth_disabled": True}
@@ -46,6 +49,7 @@ async def _generate(spec: str, out: Path, provider_name: str | None, sandbox: st
     llm = build_registry(settings).get(provider_name)
     state = PipelineState(
         spec=spec,
+        stack=Stack(stack),
         sandbox=build_sandbox(settings),
         max_test_repair_rounds=settings.sandbox_max_repair_rounds,
     )
@@ -116,6 +120,12 @@ def main(argv: list[str] | None = None) -> None:
     generate.add_argument("--out", type=Path, required=True, help="Output directory")
     generate.add_argument("--provider", default=None, help="Provider (default: configured default)")
     generate.add_argument(
+        "--stack",
+        choices=["python", "typescript", "go"],
+        default="python",
+        help="Target stack of the generated project (default: python)",
+    )
+    generate.add_argument(
         "--sandbox",
         choices=["none", "docker", "local", "remote"],
         default=None,
@@ -144,7 +154,7 @@ def main(argv: list[str] | None = None) -> None:
         spec = args.spec
         if spec.startswith("@"):
             spec = Path(spec[1:]).read_text(encoding="utf-8")
-        sys.exit(asyncio.run(_generate(spec, args.out, args.provider, args.sandbox)))
+        sys.exit(asyncio.run(_generate(spec, args.out, args.provider, args.sandbox, args.stack)))
 
     settings = get_settings()
     if args.command == "usage":

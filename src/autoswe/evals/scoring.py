@@ -15,7 +15,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from autoswe.evals.fixtures import EvalFixture
-from autoswe.evals.routes import implemented_endpoints, normalize_endpoint, parse_endpoint
+from autoswe.evals.routes import implemented_endpoints_for, normalize_endpoint, parse_endpoint
 from autoswe.pipeline.agents import PipelineState
 from autoswe.sandbox.models import CheckResult, SandboxStatus
 
@@ -24,8 +24,8 @@ METRICS: dict[str, str] = {
     "validation_passed": "Structural validation found no errors",
     "tests_passed": "Every generated test passed in the sandbox (and at least min_tests ran)",
     "test_pass_rate": "Passed / collected tests in the sandbox",
-    "lint_clean": "ruff check passed in the sandbox",
-    "typecheck_clean": "mypy passed in the sandbox",
+    "lint_clean": "The stack's linter passed in the sandbox (ruff, ESLint, gofmt)",
+    "typecheck_clean": "The stack's type checker passed in the sandbox (mypy, tsc, go vet)",
     "endpoint_recall": "Expected endpoints from the spec that the code actually serves",
     "design_coverage": "Endpoints in the architecture that the code actually serves",
     "entity_recall": "Expected entities present in the requirements",
@@ -90,7 +90,7 @@ def _entity_metrics(
 def score(fixture: EvalFixture, state: PipelineState, error: str | None) -> FixtureResult:
     expected = fixture.expected
     files = {path: f.content for path, f in state.files.items()}
-    served = implemented_endpoints(files)
+    served = implemented_endpoints_for(files, fixture.stack)
     wanted = {parse_endpoint(e) for e in expected.endpoints}
     architecture = state.architecture
     designed = {

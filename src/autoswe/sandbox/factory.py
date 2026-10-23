@@ -32,6 +32,7 @@ def build_sandbox(settings: SandboxSettings) -> Sandbox | None:
             return DockerSandbox(
                 settings.sandbox_image,
                 limits,
+                images=settings.sandbox_stack_images(),
                 runtime=settings.sandbox_docker_runtime,
                 docker=settings.sandbox_docker_binary,
                 pool=settings.sandbox_pool,

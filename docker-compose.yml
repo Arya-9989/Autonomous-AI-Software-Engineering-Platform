@@ -64,9 +64,15 @@ services:
     depends_on:
       sandbox-image:
         condition: service_completed_successfully
+      sandbox-image-node:
+        condition: service_completed_successfully
+      sandbox-image-go:
+        condition: service_completed_successfully
     environment:
       SANDBOX_RUNNER_TOKEN: ${SANDBOX_RUNNER_TOKEN:-local-demo-runner-token-change-me}
       SANDBOX_IMAGE: autoswe-sandbox:local
+      SANDBOX_IMAGE_TYPESCRIPT: autoswe-sandbox-node:local
+      SANDBOX_IMAGE_GO: autoswe-sandbox-go:local
       SANDBOX_POOL: compose
       # Set to runsc to run every sandbox container under gVisor (if the daemon has it).
       SANDBOX_DOCKER_RUNTIME: ${SANDBOX_DOCKER_RUNTIME:-}
@@ -88,12 +94,32 @@ services:
       - no-new-privileges:true
     restart: unless-stopped
 
-  # Builds the image that sandbox containers are started from, then exits.
+  # Build the images sandbox containers start from (one per target stack), then exit.
   sandbox-image:
     build:
       context: .
       dockerfile: sandbox/Dockerfile
     image: autoswe-sandbox:local
+    command: ["python", "-c", "pass"]
+    network_mode: none
+    read_only: true
+    restart: "no"
+
+  sandbox-image-node:
+    build:
+      context: .
+      dockerfile: sandbox/node/Dockerfile
+    image: autoswe-sandbox-node:local
+    command: ["python", "-c", "pass"]
+    network_mode: none
+    read_only: true
+    restart: "no"
+
+  sandbox-image-go:
+    build:
+      context: .
+      dockerfile: sandbox/go/Dockerfile
+    image: autoswe-sandbox-go:local
     command: ["python", "-c", "pass"]
     network_mode: none
     read_only: true

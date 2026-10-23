@@ -28,6 +28,7 @@ from autoswe.pipeline.artifacts import (
     ValidationIssue,
     ValidationReport,
 )
+from autoswe.stacks import Stack, profile
 
 _SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("aws-access-key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
@@ -309,19 +310,16 @@ _CHECKERS: tuple[tuple[Callable[[str], bool], Callable[[str, str, _Collector], N
 )
 
 
-def _check_structure(paths: set[str], out: _Collector) -> None:
+def _check_structure(paths: set[str], out: _Collector, stack: Stack = Stack.PYTHON) -> None:
     def has(predicate: Callable[[str], bool]) -> bool:
         return any(predicate(p) for p in paths)
 
+    target = profile(stack)
     required: list[tuple[str, Callable[[str], bool], Severity]] = [
         ("README.md", lambda p: p == "README.md", "warning"),
-        ("a dependency manifest", lambda p: p in {"pyproject.toml", "requirements.txt"}, "error"),
+        ("a dependency manifest", lambda p: p in target.manifests, "error"),
         ("a Dockerfile", lambda p: PurePosixPath(p).name == "Dockerfile", "error"),
-        (
-            "tests",
-            lambda p: PurePosixPath(p).name.startswith("test_") and p.endswith(".py"),
-            "error",
-        ),
+        ("tests", target.is_test, "error"),
         ("a CI workflow", lambda p: p.startswith(".github/workflows/"), "error"),
         ("Kubernetes manifests", lambda p: p.startswith("deploy/k8s/"), "warning"),
         ("Terraform", lambda p: p.endswith(".tf"), "warning"),
@@ -332,9 +330,9 @@ def _check_structure(paths: set[str], out: _Collector) -> None:
 
 
 def _check_traceability(
-    files: dict[str, str], architecture: ArchitectureSpec, out: _Collector
+    files: dict[str, str], architecture: ArchitectureSpec, out: _Collector, suffix: str = ".py"
 ) -> None:
-    python_sources = "\n".join(c for p, c in files.items() if p.endswith(".py"))
+    python_sources = "\n".join(c for p, c in files.items() if p.endswith(suffix))
     for endpoint in architecture.endpoints:
         static = next((seg for seg in endpoint.path.split("/") if seg and "{" not in seg), None)
         if static and f"/{static}" not in python_sources:
@@ -346,7 +344,9 @@ def _check_traceability(
 
 
 def validate_project(
-    files: list[GeneratedFile], architecture: ArchitectureSpec | None = None
+    files: list[GeneratedFile],
+    architecture: ArchitectureSpec | None = None,
+    stack: Stack = Stack.PYTHON,
 ) -> ValidationReport:
     out = _Collector()
     contents = {f.path: f.content for f in files}
@@ -355,7 +355,7 @@ def validate_project(
             if matches(path):
                 check(path, content, out)
         _check_secrets(path, content, out)
-    _check_structure(set(contents), out)
+    _check_structure(set(contents), out, stack)
     if architecture is not None:
-        _check_traceability(contents, architecture, out)
+        _check_traceability(contents, architecture, out, profile(stack).source_suffix)
     return ValidationReport(files_checked=len(contents), issues=out.issues)

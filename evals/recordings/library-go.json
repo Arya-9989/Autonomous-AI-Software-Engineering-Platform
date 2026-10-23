@@ -1,0 +1,610 @@
+{
+ "format_version": 1,
+ "fixture": "library-go",
+ "source": "offline-provider",
+ "provenance": "Synthesized by AutoSWE's deterministic offline provider (heuristics and templates). This is NOT output from Claude or any other model; it exercises the harness and pins the offline pipeline's behaviour. Re-record with --source anthropic for model output.",
+ "model": "offline-templates-v1",
+ "recorded_at": "2026-10-22T23:49:25Z",
+ "autoswe_version": "0.1.0",
+ "sandbox": "docker",
+ "calls": [
+  {
+   "agent": "analyst",
+   "request_sha256": "6f6344b8ba9ced2b9898f6878d8ab24043c8716b2421f2c00210ee1287bd6b96",
+   "model": "offline-templates-v1",
+   "usage": {},
+   "output": {
+    "project_name": "library-api",
+    "summary": "A REST API for a small library where members borrow books and librarians track loans with due dates.",
+    "user_stories": [
+     "As an API client, I can manage members (create, list, view, update, delete).",
+     "As an API client, I can manage books (create, list, view, update, delete).",
+     "As an API client, I can manage librarians (create, list, view, update, delete).",
+     "As an API client, I can manage loans (create, list, view, update, delete)."
+    ],
+    "functional_requirements": [
+     "A REST API for a small library where members borrow books and librarians track loans with due dates.",
+     "Expose create, read, update, delete and paginated list operations for members.",
+     "Expose create, read, update, delete and paginated list operations for books.",
+     "Expose create, read, update, delete and paginated list operations for librarians.",
+     "Expose create, read, update, delete and paginated list operations for loans."
+    ],
+    "non_functional_requirements": [
+     "Ship as a non-root container image with a health check.",
+     "Every change runs lint, tests and an image build in CI.",
+     "Configuration comes from environment variables (12-factor)."
+    ],
+    "entities": [
+     {
+      "name": "Member",
+      "description": "Members managed by the service.",
+      "fields": [
+       {
+        "name": "name",
+        "type": "string",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "email",
+        "type": "string",
+        "required": true,
+        "description": ""
+       }
+      ]
+     },
+     {
+      "name": "Book",
+      "description": "Books managed by the service.",
+      "fields": [
+       {
+        "name": "title",
+        "type": "string",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "author",
+        "type": "string",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "isbn",
+        "type": "string",
+        "required": false,
+        "description": ""
+       },
+       {
+        "name": "published_year",
+        "type": "integer",
+        "required": false,
+        "description": ""
+       }
+      ]
+     },
+     {
+      "name": "Librarian",
+      "description": "Librarians managed by the service.",
+      "fields": [
+       {
+        "name": "name",
+        "type": "string",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "description",
+        "type": "text",
+        "required": false,
+        "description": ""
+       }
+      ]
+     },
+     {
+      "name": "Loan",
+      "description": "Loans managed by the service.",
+      "fields": [
+       {
+        "name": "due_date",
+        "type": "date",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "borrowed_on",
+        "type": "date",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "returned",
+        "type": "boolean",
+        "required": false,
+        "description": ""
+       }
+      ]
+     }
+    ],
+    "assumptions": [
+     "Single-tenant HTTP JSON API.",
+     "SQLite for local development, PostgreSQL in production via DATABASE_URL."
+    ],
+    "out_of_scope": [
+     "Authentication and authorisation (not requested).",
+     "A graphical frontend; the deliverable is an HTTP API."
+    ]
+   }
+  },
+  {
+   "agent": "architect",
+   "request_sha256": "3ed4011dbe2e03d463a5173dea82f05a9c01c1dd5396ffaa5a4a5a0d844ae098",
+   "model": "offline-templates-v1",
+   "usage": {},
+   "output": {
+    "style": "Single-process HTTP service with in-memory storage",
+    "overview": "A REST API for a small library where members borrow books and librarians track loans with due dates. The service is written in Go 1.27 using only its standard library. Each entity has a typed model, input validation and CRUD handlers; data is held in memory, so it runs as one replica until a database replaces the store.",
+    "components": [
+     {
+      "name": "HTTP API",
+      "responsibility": "Routing, request validation and JSON serialisation",
+      "technology": "net/http ServeMux with method and path patterns",
+      "depends_on": [
+       "Store"
+      ]
+     },
+     {
+      "name": "Store",
+      "responsibility": "Thread-safe in-memory storage per entity",
+      "technology": "Standard library collections",
+      "depends_on": []
+     },
+     {
+      "name": "Delivery pipeline",
+      "responsibility": "Lint, type check, test, build and publish the image",
+      "technology": "GitHub Actions + Docker",
+      "depends_on": [
+       "HTTP API"
+      ]
+     }
+    ],
+    "entities": [
+     {
+      "name": "Member",
+      "description": "Members managed by the service.",
+      "fields": [
+       {
+        "name": "name",
+        "type": "string",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "email",
+        "type": "string",
+        "required": true,
+        "description": ""
+       }
+      ]
+     },
+     {
+      "name": "Book",
+      "description": "Books managed by the service.",
+      "fields": [
+       {
+        "name": "title",
+        "type": "string",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "author",
+        "type": "string",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "isbn",
+        "type": "string",
+        "required": false,
+        "description": ""
+       },
+       {
+        "name": "published_year",
+        "type": "integer",
+        "required": false,
+        "description": ""
+       }
+      ]
+     },
+     {
+      "name": "Librarian",
+      "description": "Librarians managed by the service.",
+      "fields": [
+       {
+        "name": "name",
+        "type": "string",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "description",
+        "type": "text",
+        "required": false,
+        "description": ""
+       }
+      ]
+     },
+     {
+      "name": "Loan",
+      "description": "Loans managed by the service.",
+      "fields": [
+       {
+        "name": "due_date",
+        "type": "date",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "borrowed_on",
+        "type": "date",
+        "required": true,
+        "description": ""
+       },
+       {
+        "name": "returned",
+        "type": "boolean",
+        "required": false,
+        "description": ""
+       }
+      ]
+     }
+    ],
+    "endpoints": [
+     {
+      "method": "GET",
+      "path": "/healthz",
+      "summary": "Liveness probe",
+      "entity": null
+     },
+     {
+      "method": "GET",
+      "path": "/members",
+      "summary": "List members",
+      "entity": "Member"
+     },
+     {
+      "method": "POST",
+      "path": "/members",
+      "summary": "Create a member",
+      "entity": "Member"
+     },
+     {
+      "method": "GET",
+      "path": "/members/{member_id}",
+      "summary": "Get one member",
+      "entity": "Member"
+     },
+     {
+      "method": "PATCH",
+      "path": "/members/{member_id}",
+      "summary": "Update a member",
+      "entity": "Member"
+     },
+     {
+      "method": "DELETE",
+      "path": "/members/{member_id}",
+      "summary": "Delete a member",
+      "entity": "Member"
+     },
+     {
+      "method": "GET",
+      "path": "/books",
+      "summary": "List books",
+      "entity": "Book"
+     },
+     {
+      "method": "POST",
+      "path": "/books",
+      "summary": "Create a book",
+      "entity": "Book"
+     },
+     {
+      "method": "GET",
+      "path": "/books/{book_id}",
+      "summary": "Get one book",
+      "entity": "Book"
+     },
+     {
+      "method": "PATCH",
+      "path": "/books/{book_id}",
+      "summary": "Update a book",
+      "entity": "Book"
+     },
+     {
+      "method": "DELETE",
+      "path": "/books/{book_id}",
+      "summary": "Delete a book",
+      "entity": "Book"
+     },
+     {
+      "method": "GET",
+      "path": "/librarians",
+      "summary": "List librarians",
+      "entity": "Librarian"
+     },
+     {
+      "method": "POST",
+      "path": "/librarians",
+      "summary": "Create a librarian",
+      "entity": "Librarian"
+     },
+     {
+      "method": "GET",
+      "path": "/librarians/{librarian_id}",
+      "summary": "Get one librarian",
+      "entity": "Librarian"
+     },
+     {
+      "method": "PATCH",
+      "path": "/librarians/{librarian_id}",
+      "summary": "Update a librarian",
+      "entity": "Librarian"
+     },
+     {
+      "method": "DELETE",
+      "path": "/librarians/{librarian_id}",
+      "summary": "Delete a librarian",
+      "entity": "Librarian"
+     },
+     {
+      "method": "GET",
+      "path": "/loans",
+      "summary": "List loans",
+      "entity": "Loan"
+     },
+     {
+      "method": "POST",
+      "path": "/loans",
+      "summary": "Create a loan",
+      "entity": "Loan"
+     },
+     {
+      "method": "GET",
+      "path": "/loans/{loan_id}",
+      "summary": "Get one loan",
+      "entity": "Loan"
+     },
+     {
+      "method": "PATCH",
+      "path": "/loans/{loan_id}",
+      "summary": "Update a loan",
+      "entity": "Loan"
+     },
+     {
+      "method": "DELETE",
+      "path": "/loans/{loan_id}",
+      "summary": "Delete a loan",
+      "entity": "Loan"
+     }
+    ],
+    "tech_stack": [
+     {
+      "layer": "Language",
+      "choice": "Go 1.27",
+      "rationale": "One static binary, fast start-up and a strong standard library"
+     },
+     {
+      "layer": "HTTP",
+      "choice": "net/http ServeMux with method and path patterns",
+      "rationale": "No third-party runtime dependencies to audit or update"
+     },
+     {
+      "layer": "Tests",
+      "choice": "testing with net/http/httptest",
+      "rationale": "Exercises the real HTTP surface, in process"
+     },
+     {
+      "layer": "Packaging",
+      "choice": "Docker (multi-stage, distroless static, non-root)",
+      "rationale": "Reproducible runtime with a small attack surface"
+     },
+     {
+      "layer": "Orchestration",
+      "choice": "Kubernetes Deployment + Service",
+      "rationale": "Rolling updates and probes"
+     },
+     {
+      "layer": "Infrastructure as code",
+      "choice": "Terraform (AWS ECS Fargate)",
+      "rationale": "Declarative, reviewable infrastructure changes"
+     }
+    ],
+    "deployment": {
+     "container_port": 8000,
+     "replicas": 1,
+     "database": "memory",
+     "cloud_target": "aws-ecs-fargate",
+     "environment_variables": [
+      "PORT"
+     ]
+    },
+    "decisions": [
+     {
+      "title": "Standard library only",
+      "decision": "Use no third-party runtime dependencies.",
+      "rationale": "Nothing to install or patch at run time; the scaffold stays small.",
+      "alternatives": [
+       "A web framework (Express, Fastify, chi, gin)"
+      ]
+     },
+     {
+      "title": "In-memory storage",
+      "decision": "Keep data in memory behind a small store interface.",
+      "rationale": "No database to provision for the first version; the store is the seam where a database goes next, and until then it runs as one replica.",
+      "alternatives": [
+       "PostgreSQL from day one",
+       "SQLite"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "agent": "coder",
+   "request_sha256": "a2a4fd0a1598e961331f13c7912d422870d22c607c1691ec812b5d2e2fbce8c9",
+   "model": "offline-templates-v1",
+   "usage": {},
+   "output": {
+    "files": [
+     {
+      "path": "go.mod",
+      "content": "module library-api\n\ngo 1.27\n",
+      "description": "Module definition (no dependencies)"
+     },
+     {
+      "path": "README.md",
+      "content": "# library-api\n\nA REST API for a small library where members borrow books and librarians track loans with due dates.\n\n> Generated by the Autonomous AI Software Engineering Platform (offline provider).\n> Review the code before deploying it anywhere that matters.\n\nGo 1.27 with the standard library only. Data is kept in memory, so run one\nreplica until a database replaces `store.go`.\n\n## Run and test\n\n```bash\ngo run .             # http://localhost:8000\ngofmt -l . && go vet ./... && go test ./...\n```\n\n## API\n\n| Method | Path | Description |\n| --- | --- | --- |\n| `GET` | `/healthz` | Liveness probe |\n| `GET` | `/members` | List members |\n| `POST` | `/members` | Create a member |\n| `GET` | `/members/{member_id}` | Get one member |\n| `PATCH` | `/members/{member_id}` | Update a member |\n| `DELETE` | `/members/{member_id}` | Delete a member |\n| `GET` | `/books` | List books |\n| `POST` | `/books` | Create a book |\n| `GET` | `/books/{book_id}` | Get one book |\n| `PATCH` | `/books/{book_id}` | Update a book |\n| `DELETE` | `/books/{book_id}` | Delete a book |\n| `GET` | `/librarians` | List librarians |\n| `POST` | `/librarians` | Create a librarian |\n| `GET` | `/librarians/{librarian_id}` | Get one librarian |\n| `PATCH` | `/librarians/{librarian_id}` | Update a librarian |\n| `DELETE` | `/librarians/{librarian_id}` | Delete a librarian |\n| `GET` | `/loans` | List loans |\n| `POST` | `/loans` | Create a loan |\n| `GET` | `/loans/{loan_id}` | Get one loan |\n| `PATCH` | `/loans/{loan_id}` | Update a loan |\n| `DELETE` | `/loans/{loan_id}` | Delete a loan |\n",
+      "description": "How to run, test and deploy the service"
+     },
+     {
+      "path": "main.go",
+      "content": "package main\n\nimport (\n\t\"flag\"\n\t\"log\"\n\t\"net/http\"\n\t\"os\"\n\t\"time\"\n)\n\nfunc main() {\n\thealthcheck := flag.Bool(\"healthcheck\", false, \"probe /healthz on the local server and exit\")\n\tflag.Parse()\n\tport := os.Getenv(\"PORT\")\n\tif port == \"\" {\n\t\tport = \"8000\"\n\t}\n\tif *healthcheck {\n\t\tos.Exit(probe(\"http://127.0.0.1:\" + port + \"/healthz\"))\n\t}\n\tserver := &http.Server{Addr: \":\" + port, Handler: newServer(), ReadHeaderTimeout: 10 * time.Second}\n\tlog.Printf(\"listening on :%s\", port)\n\tlog.Fatal(server.ListenAndServe())\n}\n\n// probe is the container health check: exit status 0 when /healthz answers 200.\nfunc probe(url string) int {\n\tclient := http.Client{Timeout: 2 * time.Second}\n\tresponse, err := client.Get(url)\n\tif err != nil {\n\t\treturn 1\n\t}\n\tdefer response.Body.Close()\n\tif response.StatusCode != http.StatusOK {\n\t\treturn 1\n\t}\n\treturn 0\n}\n",
+      "description": "Process entry point and container health check"
+     },
+     {
+      "path": "handlers.go",
+      "content": "package main\n\nimport (\n\t\"encoding/json\"\n\t\"errors\"\n\t\"net/http\"\n\t\"strconv\"\n)\n\nconst maxBodyBytes = 1 << 20\n\ntype resource struct {\n\tlabel  string\n\tfields []FieldSpec\n\tstore  *Store\n}\n\n// newServer wires every route: CRUD for each entity, plus GET /healthz.\nfunc newServer() http.Handler {\n\tmux := http.NewServeMux()\n\tmux.HandleFunc(\"GET /healthz\", func(w http.ResponseWriter, _ *http.Request) {\n\t\twriteJSON(w, http.StatusOK, map[string]string{\"status\": \"ok\"})\n\t})\n\n\tmembers := &resource{label: \"Member\", fields: memberFields, store: NewStore()}\n\tmux.HandleFunc(\"GET /members\", members.list)\n\tmux.HandleFunc(\"POST /members\", members.create)\n\tmux.HandleFunc(\"GET /members/{id}\", members.get)\n\tmux.HandleFunc(\"PATCH /members/{id}\", members.update)\n\tmux.HandleFunc(\"DELETE /members/{id}\", members.delete)\n\n\tbooks := &resource{label: \"Book\", fields: bookFields, store: NewStore()}\n\tmux.HandleFunc(\"GET /books\", books.list)\n\tmux.HandleFunc(\"POST /books\", books.create)\n\tmux.HandleFunc(\"GET /books/{id}\", books.get)\n\tmux.HandleFunc(\"PATCH /books/{id}\", books.update)\n\tmux.HandleFunc(\"DELETE /books/{id}\", books.delete)\n\n\tlibrarians := &resource{label: \"Librarian\", fields: librarianFields, store: NewStore()}\n\tmux.HandleFunc(\"GET /librarians\", librarians.list)\n\tmux.HandleFunc(\"POST /librarians\", librarians.create)\n\tmux.HandleFunc(\"GET /librarians/{id}\", librarians.get)\n\tmux.HandleFunc(\"PATCH /librarians/{id}\", librarians.update)\n\tmux.HandleFunc(\"DELETE /librarians/{id}\", librarians.delete)\n\n\tloans := &resource{label: \"Loan\", fields: loanFields, store: NewStore()}\n\tmux.HandleFunc(\"GET /loans\", loans.list)\n\tmux.HandleFunc(\"POST /loans\", loans.create)\n\tmux.HandleFunc(\"GET /loans/{id}\", loans.get)\n\tmux.HandleFunc(\"PATCH /loans/{id}\", loans.update)\n\tmux.HandleFunc(\"DELETE /loans/{id}\", loans.delete)\n\treturn mux\n}\n\nfunc writeJSON(w http.ResponseWriter, status int, body any) {\n\tw.Header().Set(\"Content-Type\", \"application/json\")\n\tw.WriteHeader(status)\n\t_ = json.NewEncoder(w).Encode(body)\n}\n\nfunc detail(w http.ResponseWriter, status int, message any) {\n\twriteJSON(w, status, map[string]any{\"detail\": message})\n}\n\nfunc readBody(w http.ResponseWriter, r *http.Request) (map[string]any, bool) {\n\tvar body map[string]any\n\terr := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes)).Decode(&body)\n\tvar tooLarge *http.MaxBytesError\n\tswitch {\n\tcase errors.As(err, &tooLarge):\n\t\tdetail(w, http.StatusRequestEntityTooLarge, \"Body too large\")\n\t\treturn nil, false\n\tcase err != nil || body == nil:\n\t\tdetail(w, http.StatusUnprocessableEntity, \"Body must be a JSON object\")\n\t\treturn nil, false\n\t}\n\treturn body, true\n}\n\nfunc intParam(r *http.Request, name string, fallback int) (int, bool) {\n\traw := r.URL.Query().Get(name)\n\tif raw == \"\" {\n\t\treturn fallback, true\n\t}\n\tvalue, err := strconv.Atoi(raw)\n\treturn value, err == nil\n}\n\nfunc (res *resource) id(w http.ResponseWriter, r *http.Request) (int64, bool) {\n\tid, err := strconv.ParseInt(r.PathValue(\"id\"), 10, 64)\n\tif err != nil || id < 1 {\n\t\tdetail(w, http.StatusNotFound, res.label+\" not found\")\n\t\treturn 0, false\n\t}\n\treturn id, true\n}\n\nfunc (res *resource) list(w http.ResponseWriter, r *http.Request) {\n\tlimit, okLimit := intParam(r, \"limit\", 50)\n\toffset, okOffset := intParam(r, \"offset\", 0)\n\tif !okLimit || !okOffset || limit < 1 || limit > 200 || offset < 0 {\n\t\tdetail(w, http.StatusUnprocessableEntity, []string{\"limit or offset out of range\"})\n\t\treturn\n\t}\n\twriteJSON(w, http.StatusOK, res.store.List(limit, offset))\n}\n\nfunc (res *resource) create(w http.ResponseWriter, r *http.Request) {\n\tbody, ok := readBody(w, r)\n\tif !ok {\n\t\treturn\n\t}\n\tdata, problems := validate(res.fields, body, false)\n\tif len(problems) > 0 {\n\t\tdetail(w, http.StatusUnprocessableEntity, problems)\n\t\treturn\n\t}\n\twriteJSON(w, http.StatusCreated, res.store.Create(data))\n}\n\nfunc (res *resource) get(w http.ResponseWriter, r *http.Request) {\n\tid, ok := res.id(w, r)\n\tif !ok {\n\t\treturn\n\t}\n\titem, found := res.store.Get(id)\n\tif !found {\n\t\tdetail(w, http.StatusNotFound, res.label+\" not found\")\n\t\treturn\n\t}\n\twriteJSON(w, http.StatusOK, item)\n}\n\nfunc (res *resource) update(w http.ResponseWriter, r *http.Request) {\n\tid, ok := res.id(w, r)\n\tif !ok {\n\t\treturn\n\t}\n\tbody, ok := readBody(w, r)\n\tif !ok {\n\t\treturn\n\t}\n\tdata, problems := validate(res.fields, body, true)\n\tif len(problems) > 0 {\n\t\tdetail(w, http.StatusUnprocessableEntity, problems)\n\t\treturn\n\t}\n\titem, found := res.store.Update(id, data)\n\tif !found {\n\t\tdetail(w, http.StatusNotFound, res.label+\" not found\")\n\t\treturn\n\t}\n\twriteJSON(w, http.StatusOK, item)\n}\n\nfunc (res *resource) delete(w http.ResponseWriter, r *http.Request) {\n\tid, ok := res.id(w, r)\n\tif !ok {\n\t\treturn\n\t}\n\tif !res.store.Delete(id) {\n\t\tdetail(w, http.StatusNotFound, res.label+\" not found\")\n\t\treturn\n\t}\n\tw.WriteHeader(http.StatusNoContent)\n}\n",
+      "description": "HTTP routing and CRUD handlers"
+     },
+     {
+      "path": "models.go",
+      "content": "package main\n\n// Member is the JSON shape of one member.\ntype Member struct {\n\tID        int64  `json:\"id\"`\n\tName      string `json:\"name\"`\n\tEmail     string `json:\"email\"`\n\tCreatedAt string `json:\"created_at\"`\n}\n\nvar memberFields = []FieldSpec{\n\t{Name: \"name\", Type: TypeString, Required: true},\n\t{Name: \"email\", Type: TypeString, Required: true},\n}\n\n// Book is the JSON shape of one book.\ntype Book struct {\n\tID            int64   `json:\"id\"`\n\tTitle         string  `json:\"title\"`\n\tAuthor        string  `json:\"author\"`\n\tISBN          *string `json:\"isbn\"`\n\tPublishedYear *int64  `json:\"published_year\"`\n\tCreatedAt     string  `json:\"created_at\"`\n}\n\nvar bookFields = []FieldSpec{\n\t{Name: \"title\", Type: TypeString, Required: true},\n\t{Name: \"author\", Type: TypeString, Required: true},\n\t{Name: \"isbn\", Type: TypeString, Required: false},\n\t{Name: \"published_year\", Type: TypeInteger, Required: false},\n}\n\n// Librarian is the JSON shape of one librarian.\ntype Librarian struct {\n\tID          int64   `json:\"id\"`\n\tName        string  `json:\"name\"`\n\tDescription *string `json:\"description\"`\n\tCreatedAt   string  `json:\"created_at\"`\n}\n\nvar librarianFields = []FieldSpec{\n\t{Name: \"name\", Type: TypeString, Required: true},\n\t{Name: \"description\", Type: TypeText, Required: false},\n}\n\n// Loan is the JSON shape of one loan.\ntype Loan struct {\n\tID         int64  `json:\"id\"`\n\tDueDate    string `json:\"due_date\"`\n\tBorrowedOn string `json:\"borrowed_on\"`\n\tReturned   *bool  `json:\"returned\"`\n\tCreatedAt  string `json:\"created_at\"`\n}\n\nvar loanFields = []FieldSpec{\n\t{Name: \"due_date\", Type: TypeDate, Required: true},\n\t{Name: \"borrowed_on\", Type: TypeDate, Required: true},\n\t{Name: \"returned\", Type: TypeBoolean, Required: false},\n}\n",
+      "description": "Entity types and field lists"
+     },
+     {
+      "path": "validation.go",
+      "content": "package main\n\nimport (\n\t\"fmt\"\n\t\"math\"\n\t\"sort\"\n\t\"time\"\n)\n\n// FieldType is the JSON type a field accepts.\ntype FieldType string\n\n// The field types an entity can use.\nconst (\n\tTypeString   FieldType = \"string\"\n\tTypeText     FieldType = \"text\"\n\tTypeInteger  FieldType = \"integer\"\n\tTypeFloat    FieldType = \"float\"\n\tTypeBoolean  FieldType = \"boolean\"\n\tTypeDate     FieldType = \"date\"\n\tTypeDateTime FieldType = \"datetime\"\n)\n\n// FieldSpec describes one field of an entity.\ntype FieldSpec struct {\n\tName     string\n\tType     FieldType\n\tRequired bool\n}\n\nfunc accepts(kind FieldType, value any) bool {\n\tswitch kind {\n\tcase TypeString:\n\t\ttext, ok := value.(string)\n\t\treturn ok && len(text) <= 255\n\tcase TypeText:\n\t\t_, ok := value.(string)\n\t\treturn ok\n\tcase TypeInteger:\n\t\tnumber, ok := value.(float64)\n\t\treturn ok && number == math.Trunc(number) && math.Abs(number) < 1<<53\n\tcase TypeFloat:\n\t\tnumber, ok := value.(float64)\n\t\treturn ok && !math.IsInf(number, 0) && !math.IsNaN(number)\n\tcase TypeBoolean:\n\t\t_, ok := value.(bool)\n\t\treturn ok\n\tcase TypeDate:\n\t\ttext, ok := value.(string)\n\t\tif !ok {\n\t\t\treturn false\n\t\t}\n\t\t_, err := time.Parse(time.DateOnly, text)\n\t\treturn err == nil\n\tcase TypeDateTime:\n\t\ttext, ok := value.(string)\n\t\tif !ok {\n\t\t\treturn false\n\t\t}\n\t\t_, err := time.Parse(time.RFC3339, text)\n\t\treturn err == nil\n\t}\n\treturn false\n}\n\n// validate checks a decoded JSON object; partial (PATCH) allows any subset of fields.\nfunc validate(fields []FieldSpec, body map[string]any, partial bool) (map[string]any, []string) {\n\tknown := make(map[string]FieldSpec, len(fields))\n\tfor _, field := range fields {\n\t\tknown[field.Name] = field\n\t}\n\tvar problems []string\n\tfor key := range body {\n\t\tif _, ok := known[key]; !ok {\n\t\t\tproblems = append(problems, key+\": unknown field\")\n\t\t}\n\t}\n\tdata := make(map[string]any, len(fields))\n\tfor _, field := range fields {\n\t\tvalue, present := body[field.Name]\n\t\tswitch {\n\t\tcase !present:\n\t\t\tif field.Required && !partial {\n\t\t\t\tproblems = append(problems, field.Name+\": required\")\n\t\t\t}\n\t\tcase value == nil && !field.Required:\n\t\t\tdata[field.Name] = nil\n\t\tcase accepts(field.Type, value):\n\t\t\tdata[field.Name] = value\n\t\tdefault:\n\t\t\tproblems = append(problems, fmt.Sprintf(\"%s: expected %s\", field.Name, field.Type))\n\t\t}\n\t}\n\tsort.Strings(problems)\n\treturn data, problems\n}\n",
+      "description": "Field-driven input validation"
+     },
+     {
+      "path": "store.go",
+      "content": "package main\n\nimport (\n\t\"sort\"\n\t\"sync\"\n\t\"time\"\n)\n\n// Item is one stored entity as a JSON object.\ntype Item map[string]any\n\n// Store keeps one entity's items in memory. Replace it with a database before scaling out.\ntype Store struct {\n\tmu    sync.Mutex\n\titems map[int64]Item\n\tnext  int64\n}\n\n// NewStore returns an empty store.\nfunc NewStore() *Store {\n\treturn &Store{items: make(map[int64]Item), next: 1}\n}\n\n// List returns up to limit items, oldest first, after skipping offset.\nfunc (s *Store) List(limit, offset int) []Item {\n\ts.mu.Lock()\n\tdefer s.mu.Unlock()\n\tids := make([]int64, 0, len(s.items))\n\tfor id := range s.items {\n\t\tids = append(ids, id)\n\t}\n\tsort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })\n\tpage := make([]Item, 0, limit)\n\tfor i := offset; i < len(ids) && len(page) < limit; i++ {\n\t\tpage = append(page, s.items[ids[i]])\n\t}\n\treturn page\n}\n\n// Get returns the item with the given id.\nfunc (s *Store) Get(id int64) (Item, bool) {\n\ts.mu.Lock()\n\tdefer s.mu.Unlock()\n\titem, ok := s.items[id]\n\treturn item, ok\n}\n\n// Create stores a new item and returns it with its id and creation time.\nfunc (s *Store) Create(data map[string]any) Item {\n\ts.mu.Lock()\n\tdefer s.mu.Unlock()\n\titem := Item{\"id\": s.next, \"created_at\": time.Now().UTC().Format(time.RFC3339)}\n\tfor key, value := range data {\n\t\titem[key] = value\n\t}\n\ts.items[s.next] = item\n\ts.next++\n\treturn item\n}\n\n// Update merges data into an existing item.\nfunc (s *Store) Update(id int64, data map[string]any) (Item, bool) {\n\ts.mu.Lock()\n\tdefer s.mu.Unlock()\n\tcurrent, ok := s.items[id]\n\tif !ok {\n\t\treturn nil, false\n\t}\n\tupdated := make(Item, len(current))\n\tfor key, value := range current {\n\t\tupdated[key] = value\n\t}\n\tfor key, value := range data {\n\t\tupdated[key] = value\n\t}\n\ts.items[id] = updated\n\treturn updated, true\n}\n\n// Delete removes an item and reports whether it existed.\nfunc (s *Store) Delete(id int64) bool {\n\ts.mu.Lock()\n\tdefer s.mu.Unlock()\n\t_, ok := s.items[id]\n\tdelete(s.items, id)\n\treturn ok\n}\n",
+      "description": "In-memory storage per entity"
+     },
+     {
+      "path": "helpers_test.go",
+      "content": "package main\n\nimport (\n\t\"bytes\"\n\t\"encoding/json\"\n\t\"net/http\"\n\t\"net/http/httptest\"\n\t\"testing\"\n)\n\nfunc call(t *testing.T, server *httptest.Server, method, path string, body any) *http.Response {\n\tt.Helper()\n\tvar payload bytes.Buffer\n\tif body != nil {\n\t\tif err := json.NewEncoder(&payload).Encode(body); err != nil {\n\t\t\tt.Fatal(err)\n\t\t}\n\t}\n\trequest, err := http.NewRequest(method, server.URL+path, &payload)\n\tif err != nil {\n\t\tt.Fatal(err)\n\t}\n\trequest.Header.Set(\"Content-Type\", \"application/json\")\n\tresponse, err := server.Client().Do(request)\n\tif err != nil {\n\t\tt.Fatal(err)\n\t}\n\tt.Cleanup(func() { response.Body.Close() })\n\treturn response\n}\n\nfunc expect(t *testing.T, response *http.Response, status int) {\n\tt.Helper()\n\tif response.StatusCode != status {\n\t\tt.Fatalf(\"%s %s: status %d, want %d\", response.Request.Method, response.Request.URL.Path, response.StatusCode, status)\n\t}\n}\n\nfunc decode[T any](t *testing.T, response *http.Response, status int) T {\n\tt.Helper()\n\texpect(t, response, status)\n\tvar value T\n\tif err := json.NewDecoder(response.Body).Decode(&value); err != nil {\n\t\tt.Fatal(err)\n\t}\n\treturn value\n}\n\n// normalize gives a payload the shape JSON decoding produces (numbers as float64).\nfunc normalize(t *testing.T, value map[string]any) map[string]any {\n\tt.Helper()\n\tencoded, err := json.Marshal(value)\n\tif err != nil {\n\t\tt.Fatal(err)\n\t}\n\tvar decoded map[string]any\n\tif err := json.Unmarshal(encoded, &decoded); err != nil {\n\t\tt.Fatal(err)\n\t}\n\treturn decoded\n}\n\nfunc TestHealthz(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\tbody := decode[map[string]string](t, call(t, server, http.MethodGet, \"/healthz\", nil), http.StatusOK)\n\tif body[\"status\"] != \"ok\" {\n\t\tt.Fatalf(\"status = %q\", body[\"status\"])\n\t}\n}\n",
+      "description": "Test helpers and the health endpoint test"
+     },
+     {
+      "path": "members_test.go",
+      "content": "package main\n\nimport (\n\t\"fmt\"\n\t\"net/http\"\n\t\"net/http/httptest\"\n\t\"testing\"\n)\n\nvar memberPayload = map[string]any{\n\t\"name\":  \"example name\",\n\t\"email\": \"example email\",\n}\n\nfunc TestMemberCreateAndGet(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\tcreated := decode[map[string]any](t, call(t, server, http.MethodPost, \"/members\", memberPayload), http.StatusCreated)\n\tfor key, want := range normalize(t, memberPayload) {\n\t\tif created[key] != want {\n\t\t\tt.Errorf(\"%s = %v, want %v\", key, created[key], want)\n\t\t}\n\t}\n\tfetched := decode[map[string]any](t, call(t, server, http.MethodGet, fmt.Sprintf(\"/members/%v\", created[\"id\"]), nil), http.StatusOK)\n\tif fetched[\"id\"] != created[\"id\"] {\n\t\tt.Fatalf(\"id = %v, want %v\", fetched[\"id\"], created[\"id\"])\n\t}\n}\n\nfunc TestMemberListPaginates(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\tfor range 3 {\n\t\texpect(t, call(t, server, http.MethodPost, \"/members\", memberPayload), http.StatusCreated)\n\t}\n\tpage := decode[[]map[string]any](t, call(t, server, http.MethodGet, \"/members?limit=2&offset=1\", nil), http.StatusOK)\n\tif len(page) != 2 {\n\t\tt.Fatalf(\"page has %d items, want 2\", len(page))\n\t}\n\texpect(t, call(t, server, http.MethodGet, \"/members?limit=0\", nil), http.StatusUnprocessableEntity)\n}\n\nfunc TestMemberUpdate(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\tcreated := decode[map[string]any](t, call(t, server, http.MethodPost, \"/members\", memberPayload), http.StatusCreated)\n\tpath := fmt.Sprintf(\"/members/%v\", created[\"id\"])\n\tupdated := decode[map[string]any](t, call(t, server, http.MethodPatch, path, map[string]any{\"name\": \"updated name\"}), http.StatusOK)\n\tif updated[\"name\"] != \"updated name\" {\n\t\tt.Fatalf(\"name = %v\", updated[\"name\"])\n\t}\n}\n\nfunc TestMemberDelete(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\tcreated := decode[map[string]any](t, call(t, server, http.MethodPost, \"/members\", memberPayload), http.StatusCreated)\n\tpath := fmt.Sprintf(\"/members/%v\", created[\"id\"])\n\texpect(t, call(t, server, http.MethodDelete, path, nil), http.StatusNoContent)\n\texpect(t, call(t, server, http.MethodGet, path, nil), http.StatusNotFound)\n}\n\nfunc TestMemberUnknownIDIs404(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\texpect(t, call(t, server, http.MethodGet, \"/members/999999\", nil), http.StatusNotFound)\n\texpect(t, call(t, server, http.MethodGet, \"/members/not-a-number\", nil), http.StatusNotFound)\n}\n\nfunc TestMemberRejectsInvalidInput(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\texpect(t, call(t, server, http.MethodPost, \"/members\", map[string]any{\"unknown_field\": 1}), http.StatusUnprocessableEntity)\n\texpect(t, call(t, server, http.MethodPost, \"/members\", map[string]any{}), http.StatusUnprocessableEntity)\n}\n",
+      "description": "API tests for members"
+     },
+     {
+      "path": "books_test.go",
+      "content": "package main\n\nimport (\n\t\"fmt\"\n\t\"net/http\"\n\t\"net/http/httptest\"\n\t\"testing\"\n)\n\nvar bookPayload = map[string]any{\n\t\"title\":          \"example title\",\n\t\"author\":         \"example author\",\n\t\"isbn\":           \"example isbn\",\n\t\"published_year\": 3,\n}\n\nfunc TestBookCreateAndGet(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\tcreated := decode[map[string]any](t, call(t, server, http.MethodPost, \"/books\", bookPayload), http.StatusCreated)\n\tfor key, want := range normalize(t, bookPayload) {\n\t\tif created[key] != want {\n\t\t\tt.Errorf(\"%s = %v, want %v\", key, created[key], want)\n\t\t}\n\t}\n\tfetched := decode[map[string]any](t, call(t, server, http.MethodGet, fmt.Sprintf(\"/books/%v\", created[\"id\"]), nil), http.StatusOK)\n\tif fetched[\"id\"] != created[\"id\"] {\n\t\tt.Fatalf(\"id = %v, want %v\", fetched[\"id\"], created[\"id\"])\n\t}\n}\n\nfunc TestBookListPaginates(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\tfor range 3 {\n\t\texpect(t, call(t, server, http.MethodPost, \"/books\", bookPayload), http.StatusCreated)\n\t}\n\tpage := decode[[]map[string]any](t, call(t, server, http.MethodGet, \"/books?limit=2&offset=1\", nil), http.StatusOK)\n\tif len(page) != 2 {\n\t\tt.Fatalf(\"page has %d items, want 2\", len(page))\n\t}\n\texpect(t, call(t, server, http.MethodGet, \"/books?limit=0\", nil), http.StatusUnprocessableEntity)\n}\n\nfunc TestBookUpdate(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\tcreated := decode[map[string]any](t, call(t, server, http.MethodPost, \"/books\", bookPayload), http.StatusCreated)\n\tpath := fmt.Sprintf(\"/books/%v\", created[\"id\"])\n\tupdated := decode[map[string]any](t, call(t, server, http.MethodPatch, path, map[string]any{\"title\": \"updated title\"}), http.StatusOK)\n\tif updated[\"title\"] != \"updated title\" {\n\t\tt.Fatalf(\"title = %v\", updated[\"title\"])\n\t}\n}\n\nfunc TestBookDelete(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\tcreated := decode[map[string]any](t, call(t, server, http.MethodPost, \"/books\", bookPayload), http.StatusCreated)\n\tpath := fmt.Sprintf(\"/books/%v\", created[\"id\"])\n\texpect(t, call(t, server, http.MethodDelete, path, nil), http.StatusNoContent)\n\texpect(t, call(t, server, http.MethodGet, path, nil), http.StatusNotFound)\n}\n\nfunc TestBookUnknownIDIs404(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\texpect(t, call(t, server, http.MethodGet, \"/books/999999\", nil), http.StatusNotFound)\n\texpect(t, call(t, server, http.MethodGet, \"/books/not-a-number\", nil), http.StatusNotFound)\n}\n\nfunc TestBookRejectsInvalidInput(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\texpect(t, call(t, server, http.MethodPost, \"/books\", map[string]any{\"unknown_field\": 1}), http.StatusUnprocessableEntity)\n\texpect(t, call(t, server, http.MethodPost, \"/books\", map[string]any{}), http.StatusUnprocessableEntity)\n}\n",
+      "description": "API tests for books"
+     },
+     {
+      "path": "librarians_test.go",
+      "content": "package main\n\nimport (\n\t\"fmt\"\n\t\"net/http\"\n\t\"net/http/httptest\"\n\t\"testing\"\n)\n\nvar librarianPayload = map[string]any{\n\t\"name\":        \"example name\",\n\t\"description\": \"Some longer description text.\",\n}\n\nfunc TestLibrarianCreateAndGet(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\tcreated := decode[map[string]any](t, call(t, server, http.MethodPost, \"/librarians\", librarianPayload), http.StatusCreated)\n\tfor key, want := range normalize(t, librarianPayload) {\n\t\tif created[key] != want {\n\t\t\tt.Errorf(\"%s = %v, want %v\", key, created[key], want)\n\t\t}\n\t}\n\tfetched := decode[map[string]any](t, call(t, server, http.MethodGet, fmt.Sprintf(\"/librarians/%v\", created[\"id\"]), nil), http.StatusOK)\n\tif fetched[\"id\"] != created[\"id\"] {\n\t\tt.Fatalf(\"id = %v, want %v\", fetched[\"id\"], created[\"id\"])\n\t}\n}\n\nfunc TestLibrarianListPaginates(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\tfor range 3 {\n\t\texpect(t, call(t, server, http.MethodPost, \"/librarians\", librarianPayload), http.StatusCreated)\n\t}\n\tpage := decode[[]map[string]any](t, call(t, server, http.MethodGet, \"/librarians?limit=2&offset=1\", nil), http.StatusOK)\n\tif len(page) != 2 {\n\t\tt.Fatalf(\"page has %d items, want 2\", len(page))\n\t}\n\texpect(t, call(t, server, http.MethodGet, \"/librarians?limit=0\", nil), http.StatusUnprocessableEntity)\n}\n\nfunc TestLibrarianUpdate(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\tcreated := decode[map[string]any](t, call(t, server, http.MethodPost, \"/librarians\", librarianPayload), http.StatusCreated)\n\tpath := fmt.Sprintf(\"/librarians/%v\", created[\"id\"])\n\tupdated := decode[map[string]any](t, call(t, server, http.MethodPatch, path, map[string]any{\"name\": \"updated name\"}), http.StatusOK)\n\tif updated[\"name\"] != \"updated name\" {\n\t\tt.Fatalf(\"name = %v\", updated[\"name\"])\n\t}\n}\n\nfunc TestLibrarianDelete(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\tcreated := decode[map[string]any](t, call(t, server, http.MethodPost, \"/librarians\", librarianPayload), http.StatusCreated)\n\tpath := fmt.Sprintf(\"/librarians/%v\", created[\"id\"])\n\texpect(t, call(t, server, http.MethodDelete, path, nil), http.StatusNoContent)\n\texpect(t, call(t, server, http.MethodGet, path, nil), http.StatusNotFound)\n}\n\nfunc TestLibrarianUnknownIDIs404(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\texpect(t, call(t, server, http.MethodGet, \"/librarians/999999\", nil), http.StatusNotFound)\n\texpect(t, call(t, server, http.MethodGet, \"/librarians/not-a-number\", nil), http.StatusNotFound)\n}\n\nfunc TestLibrarianRejectsInvalidInput(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\texpect(t, call(t, server, http.MethodPost, \"/librarians\", map[string]any{\"unknown_field\": 1}), http.StatusUnprocessableEntity)\n\texpect(t, call(t, server, http.MethodPost, \"/librarians\", map[string]any{}), http.StatusUnprocessableEntity)\n}\n",
+      "description": "API tests for librarians"
+     },
+     {
+      "path": "loans_test.go",
+      "content": "package main\n\nimport (\n\t\"fmt\"\n\t\"net/http\"\n\t\"net/http/httptest\"\n\t\"testing\"\n)\n\nvar loanPayload = map[string]any{\n\t\"due_date\":    \"2025-01-15\",\n\t\"borrowed_on\": \"2025-01-15\",\n\t\"returned\":    true,\n}\n\nfunc TestLoanCreateAndGet(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\tcreated := decode[map[string]any](t, call(t, server, http.MethodPost, \"/loans\", loanPayload), http.StatusCreated)\n\tfor key, want := range normalize(t, loanPayload) {\n\t\tif created[key] != want {\n\t\t\tt.Errorf(\"%s = %v, want %v\", key, created[key], want)\n\t\t}\n\t}\n\tfetched := decode[map[string]any](t, call(t, server, http.MethodGet, fmt.Sprintf(\"/loans/%v\", created[\"id\"]), nil), http.StatusOK)\n\tif fetched[\"id\"] != created[\"id\"] {\n\t\tt.Fatalf(\"id = %v, want %v\", fetched[\"id\"], created[\"id\"])\n\t}\n}\n\nfunc TestLoanListPaginates(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\tfor range 3 {\n\t\texpect(t, call(t, server, http.MethodPost, \"/loans\", loanPayload), http.StatusCreated)\n\t}\n\tpage := decode[[]map[string]any](t, call(t, server, http.MethodGet, \"/loans?limit=2&offset=1\", nil), http.StatusOK)\n\tif len(page) != 2 {\n\t\tt.Fatalf(\"page has %d items, want 2\", len(page))\n\t}\n\texpect(t, call(t, server, http.MethodGet, \"/loans?limit=0\", nil), http.StatusUnprocessableEntity)\n}\n\nfunc TestLoanUpdate(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\tcreated := decode[map[string]any](t, call(t, server, http.MethodPost, \"/loans\", loanPayload), http.StatusCreated)\n\tpath := fmt.Sprintf(\"/loans/%v\", created[\"id\"])\n\tupdated := decode[map[string]any](t, call(t, server, http.MethodPatch, path, map[string]any{\"due_date\": \"2025-02-20\"}), http.StatusOK)\n\tif updated[\"due_date\"] != \"2025-02-20\" {\n\t\tt.Fatalf(\"due_date = %v\", updated[\"due_date\"])\n\t}\n}\n\nfunc TestLoanDelete(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\tcreated := decode[map[string]any](t, call(t, server, http.MethodPost, \"/loans\", loanPayload), http.StatusCreated)\n\tpath := fmt.Sprintf(\"/loans/%v\", created[\"id\"])\n\texpect(t, call(t, server, http.MethodDelete, path, nil), http.StatusNoContent)\n\texpect(t, call(t, server, http.MethodGet, path, nil), http.StatusNotFound)\n}\n\nfunc TestLoanUnknownIDIs404(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\texpect(t, call(t, server, http.MethodGet, \"/loans/999999\", nil), http.StatusNotFound)\n\texpect(t, call(t, server, http.MethodGet, \"/loans/not-a-number\", nil), http.StatusNotFound)\n}\n\nfunc TestLoanRejectsInvalidInput(t *testing.T) {\n\tserver := httptest.NewServer(newServer())\n\tdefer server.Close()\n\texpect(t, call(t, server, http.MethodPost, \"/loans\", map[string]any{\"unknown_field\": 1}), http.StatusUnprocessableEntity)\n\texpect(t, call(t, server, http.MethodPost, \"/loans\", map[string]any{}), http.StatusUnprocessableEntity)\n}\n",
+      "description": "API tests for loans"
+     }
+    ],
+    "notes": "Rendered from offline templates."
+   }
+  },
+  {
+   "agent": "devops",
+   "request_sha256": "cf00579b894687d86d01cd52601a16e5b6a33bd85710312206780a07972ad3b3",
+   "model": "offline-templates-v1",
+   "usage": {},
+   "output": {
+    "files": [
+     {
+      "path": "Dockerfile",
+      "content": "# syntax=docker/dockerfile:1.7\nFROM golang:1.27-bookworm AS build\nWORKDIR /src\nCOPY go.mod ./\nCOPY *.go ./\nRUN CGO_ENABLED=0 go build -trimpath -ldflags=\"-s -w\" -o /out/app .\n\nFROM gcr.io/distroless/static-debian12:nonroot\nCOPY --from=build /out/app /app\nENV PORT=8000\nUSER 65532\nEXPOSE 8000\nHEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \\\n  CMD [\"/app\", \"-healthcheck\"]\nENTRYPOINT [\"/app\"]\n",
+      "description": "Non-root image with a health check"
+     },
+     {
+      "path": ".dockerignore",
+      "content": ".git\n.github\ndeploy/\n*_test.go\n",
+      "description": "Keeps the build context small"
+     },
+     {
+      "path": ".github/workflows/ci.yml",
+      "content": "name: CI\n\non:\n  push:\n    branches: [main]\n  pull_request:\n\npermissions:\n  contents: read\n\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - uses: actions/setup-go@v7\n        with:\n          go-version-file: go.mod\n      - name: Format\n        run: test -z \"$(gofmt -l .)\"\n      - name: Vet\n        run: go vet ./...\n      - name: Test\n        run: go test ./...\n\n  image:\n    runs-on: ubuntu-latest\n    needs: test\n    steps:\n      - uses: actions/checkout@v7\n      - uses: docker/setup-buildx-action@v4\n      - name: Build image\n        uses: docker/build-push-action@v7\n        with:\n          context: .\n          push: false\n          tags: library-api:${{ github.sha }}\n",
+      "description": "Lint, type check, test and image build on every push"
+     },
+     {
+      "path": "deploy/k8s/deployment.yaml",
+      "content": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: library-api\n  labels:\n    app.kubernetes.io/name: library-api\nspec:\n  replicas: 1\n  selector:\n    matchLabels:\n      app.kubernetes.io/name: library-api\n  template:\n    metadata:\n      labels:\n        app.kubernetes.io/name: library-api\n    spec:\n      securityContext:\n        runAsNonRoot: true\n        runAsUser: 10001\n        seccompProfile:\n          type: RuntimeDefault\n      containers:\n        - name: api\n          image: library-api:latest\n          imagePullPolicy: IfNotPresent\n          ports:\n            - name: http\n              containerPort: 8000\n          env:\n            - name: DATABASE_URL\n              valueFrom:\n                secretKeyRef:\n                  name: library-api-database\n                  key: url\n                  optional: true\n          readinessProbe:\n            httpGet:\n              path: /healthz\n              port: http\n            periodSeconds: 10\n          livenessProbe:\n            httpGet:\n              path: /healthz\n              port: http\n            initialDelaySeconds: 10\n            periodSeconds: 20\n          resources:\n            requests:\n              cpu: 100m\n              memory: 128Mi\n            limits:\n              cpu: 500m\n              memory: 256Mi\n          securityContext:\n            allowPrivilegeEscalation: false\n            capabilities:\n              drop: [ALL]\n",
+      "description": "Deployment with probes, limits and a restricted security context"
+     },
+     {
+      "path": "deploy/k8s/service.yaml",
+      "content": "apiVersion: v1\nkind: Service\nmetadata:\n  name: library-api\n  labels:\n    app.kubernetes.io/name: library-api\nspec:\n  selector:\n    app.kubernetes.io/name: library-api\n  ports:\n    - name: http\n      port: 80\n      targetPort: http\n",
+      "description": "ClusterIP service"
+     },
+     {
+      "path": "deploy/k8s/kustomization.yaml",
+      "content": "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nlabels:\n  - pairs:\n      app.kubernetes.io/part-of: library-api\nresources:\n  - deployment.yaml\n  - service.yaml\n",
+      "description": "Kustomize entry point"
+     },
+     {
+      "path": "deploy/terraform/versions.tf",
+      "content": "terraform {\n  required_version = \">= 1.6\"\n  required_providers {\n    aws = {\n      source  = \"hashicorp/aws\"\n      version = \"~> 5.0\"\n    }\n  }\n}\n\nprovider \"aws\" {\n  region = var.region\n}\n",
+      "description": "Terraform and provider constraints"
+     },
+     {
+      "path": "deploy/terraform/variables.tf",
+      "content": "variable \"region\" {\n  description = \"AWS region to deploy into\"\n  type        = string\n  default     = \"us-east-1\"\n}\n\nvariable \"name\" {\n  description = \"Name prefix for every resource\"\n  type        = string\n  default     = \"library-api\"\n}\n\nvariable \"image_tag\" {\n  description = \"Immutable image tag in the ECR repository to run (e.g. a git SHA)\"\n  type        = string\n}\n\nvariable \"vpc_id\" {\n  description = \"VPC the service runs in\"\n  type        = string\n}\n\nvariable \"subnet_ids\" {\n  description = \"Private subnets for the Fargate tasks\"\n  type        = list(string)\n}\n\nvariable \"container_port\" {\n  description = \"Port the container listens on\"\n  type        = number\n  default     = 8000\n}\n\nvariable \"desired_count\" {\n  description = \"Number of running tasks\"\n  type        = number\n  default     = 1\n}\n\nvariable \"database_url_secret_arn\" {\n  description = \"Optional Secrets Manager ARN holding DATABASE_URL\"\n  type        = string\n  default     = \"\"\n}\n",
+      "description": "Inputs: region, VPC, subnets, image tag"
+     },
+     {
+      "path": "deploy/terraform/main.tf",
+      "content": "locals {\n  secrets = var.database_url_secret_arn == \"\" ? [] : [\n    { name = \"DATABASE_URL\", valueFrom = var.database_url_secret_arn }\n  ]\n}\n\nresource \"aws_ecr_repository\" \"app\" {\n  name                 = var.name\n  image_tag_mutability = \"IMMUTABLE\"\n\n  image_scanning_configuration {\n    scan_on_push = true\n  }\n}\n\nresource \"aws_cloudwatch_log_group\" \"app\" {\n  name              = \"/ecs/${var.name}\"\n  retention_in_days = 30\n}\n\nresource \"aws_ecs_cluster\" \"this\" {\n  name = var.name\n\n  setting {\n    name  = \"containerInsights\"\n    value = \"enabled\"\n  }\n}\n\ndata \"aws_iam_policy_document\" \"ecs_tasks_assume\" {\n  statement {\n    actions = [\"sts:AssumeRole\"]\n    principals {\n      type        = \"Service\"\n      identifiers = [\"ecs-tasks.amazonaws.com\"]\n    }\n  }\n}\n\nresource \"aws_iam_role\" \"execution\" {\n  name               = \"${var.name}-execution\"\n  assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json\n}\n\nresource \"aws_iam_role_policy_attachment\" \"execution\" {\n  role       = aws_iam_role.execution.name\n  policy_arn = \"arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy\"\n}\n\nresource \"aws_security_group\" \"service\" {\n  name        = \"${var.name}-service\"\n  description = \"Ingress to the ${var.name} tasks\"\n  vpc_id      = var.vpc_id\n\n  ingress {\n    description = \"HTTP from inside the VPC\"\n    from_port   = var.container_port\n    to_port     = var.container_port\n    protocol    = \"tcp\"\n    cidr_blocks = [\"10.0.0.0/8\"]\n  }\n\n  egress {\n    description = \"Outbound HTTPS and database traffic\"\n    from_port   = 0\n    to_port     = 0\n    protocol    = \"-1\"\n    cidr_blocks = [\"0.0.0.0/0\"]\n  }\n}\n\nresource \"aws_ecs_task_definition\" \"app\" {\n  family                   = var.name\n  requires_compatibilities = [\"FARGATE\"]\n  network_mode             = \"awsvpc\"\n  cpu                      = 256\n  memory                   = 512\n  execution_role_arn       = aws_iam_role.execution.arn\n\n  container_definitions = jsonencode([\n    {\n      name         = \"api\"\n      image        = \"${aws_ecr_repository.app.repository_url}:${var.image_tag}\"\n      essential    = true\n      portMappings = [{ containerPort = var.container_port, protocol = \"tcp\" }]\n      secrets      = local.secrets\n      logConfiguration = {\n        logDriver = \"awslogs\"\n        options = {\n          awslogs-group         = aws_cloudwatch_log_group.app.name\n          awslogs-region        = var.region\n          awslogs-stream-prefix = \"api\"\n        }\n      }\n    }\n  ])\n}\n\nresource \"aws_ecs_service\" \"app\" {\n  name            = var.name\n  cluster         = aws_ecs_cluster.this.id\n  task_definition = aws_ecs_task_definition.app.arn\n  desired_count   = var.desired_count\n  launch_type     = \"FARGATE\"\n\n  network_configuration {\n    subnets          = var.subnet_ids\n    security_groups  = [aws_security_group.service.id]\n    assign_public_ip = false\n  }\n\n  deployment_circuit_breaker {\n    enable   = true\n    rollback = true\n  }\n}\n",
+      "description": "ECR repository, ECS cluster, task definition and service"
+     },
+     {
+      "path": "deploy/terraform/outputs.tf",
+      "content": "output \"ecr_repository_url\" {\n  description = \"Push the image here\"\n  value       = aws_ecr_repository.app.repository_url\n}\n\noutput \"ecs_service_name\" {\n  description = \"Name of the ECS service\"\n  value       = aws_ecs_service.app.name\n}\n",
+      "description": "Repository URL and service name"
+     }
+    ],
+    "notes": ""
+   }
+  },
+  {
+   "agent": "reviewer",
+   "request_sha256": "3da088a4b5b98ee83d47e2b87986c376d57b822f1116eb1d953dbb5916f2e3b1",
+   "model": "offline-templates-v1",
+   "usage": {},
+   "output": {
+    "summary": "Deterministic review of 25 files: the project passes all structural checks with 0 warning(s). All 25 generated tests pass in the sandbox. Offline reviews do not judge business logic.",
+    "score": 100,
+    "findings": [
+     {
+      "severity": "info",
+      "file": null,
+      "message": "Data is kept in memory: it is lost on restart and not shared between replicas.",
+      "suggestion": "Put a database behind the store module before running more than one replica."
+     },
+     {
+      "severity": "info",
+      "file": null,
+      "message": "The API is unauthenticated because the spec did not ask for auth.",
+      "suggestion": "Add OAuth2 or an authenticating gateway before exposing it publicly."
+     }
+    ]
+   }
+  }
+ ]
+}

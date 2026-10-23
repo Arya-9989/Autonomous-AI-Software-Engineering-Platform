@@ -1,0 +1,12 @@
+{
+  "name": "autoswe-sandbox-node-tools",
+  "private": true,
+  "description": "Pinned type checker and linter the TypeScript sandbox provides to generated projects (kept in step with templates_typescript.DEV_DEPENDENCIES).",
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.19.2",
+    "eslint": "10.13.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.0"
+  }
+}

@@ -14,6 +14,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from autoswe.llm.base import LLMOutputError, LLMRequest, LLMResponse, TokenUsage
+from autoswe.llm.offline import templates_go, templates_typescript
 from autoswe.llm.offline.analysis import analyze
 from autoswe.llm.offline.blueprint import design
 from autoswe.llm.offline.templates_app import render_project
@@ -28,6 +29,13 @@ from autoswe.pipeline.artifacts import (
     ValidationReport,
 )
 from autoswe.sandbox.models import SandboxResult, SandboxStatus
+from autoswe.stacks import Stack
+
+_RENDERERS = {
+    Stack.PYTHON: render_project,
+    Stack.TYPESCRIPT: templates_typescript.render_project,
+    Stack.GO: templates_go.render_project,
+}
 
 
 def _review(context: dict[str, Any]) -> ReviewReport:
@@ -42,14 +50,27 @@ def _review(context: dict[str, Any]) -> ReviewReport:
         )
         for issue in validation.issues
     ]  # fmt: skip
-    findings.append(
-        ReviewFinding(
-            severity="info",
-            file="app/main.py",
-            message="Tables are created with metadata.create_all() at startup.",
-            suggestion="Introduce Alembic migrations before the first schema change in production.",
+    if context.get("stack", Stack.PYTHON) == Stack.PYTHON:
+        findings.append(
+            ReviewFinding(
+                severity="info",
+                file="app/main.py",
+                message="Tables are created with metadata.create_all() at startup.",
+                suggestion="Introduce Alembic migrations before the first schema change in "
+                "production.",
+            )
         )
-    )
+    else:
+        findings.append(
+            ReviewFinding(
+                severity="info",
+                file=None,
+                message="Data is kept in memory: it is lost on restart and not shared between "
+                "replicas.",
+                suggestion="Put a database behind the store module before running more than "
+                "one replica.",
+            )
+        )
     if any("Authentication" in item for item in requirements.out_of_scope):
         findings.append(
             ReviewFinding(
@@ -117,17 +138,18 @@ class OfflineProvider:
         if self.delay_s > 0:
             await asyncio.sleep(self.delay_s)
         context = dict(request.context)
+        stack = Stack(context.get("stack", Stack.PYTHON))
         result: BaseModel
         match request.agent:
             case "analyst":
                 result = analyze(str(context["spec"]))
             case "architect":
-                result = design(Requirements.model_validate(context["requirements"]))
+                result = design(Requirements.model_validate(context["requirements"]), stack)
             case "coder":
                 requirements = Requirements.model_validate(context["requirements"])
                 architecture = ArchitectureSpec.model_validate(context["architecture"])
                 result = FileBundle(
-                    files=render_project(
+                    files=_RENDERERS[stack](
                         requirements.project_name, requirements.summary, architecture
                     ),
                     notes="Rendered from offline templates.",
@@ -139,7 +161,9 @@ class OfflineProvider:
             case "devops":
                 requirements = Requirements.model_validate(context["requirements"])
                 architecture = ArchitectureSpec.model_validate(context["architecture"])
-                result = FileBundle(files=render_devops(requirements.project_name, architecture))
+                result = FileBundle(
+                    files=render_devops(requirements.project_name, architecture, stack)
+                )
             case "reviewer":
                 result = _review(context)
             case other:

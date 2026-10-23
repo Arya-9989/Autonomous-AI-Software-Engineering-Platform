@@ -29,6 +29,7 @@ from autoswe.pipeline.docs import architecture_markdown
 from autoswe.pipeline.validation import Limits, path_key, sanitize_files, validate_project
 from autoswe.sandbox.backends import Sandbox
 from autoswe.sandbox.models import SandboxResult, SandboxStatus
+from autoswe.stacks import Stack, profile
 from autoswe.tracing import mark_error, tracer
 
 Emit = Callable[[str], Awaitable[None]]
@@ -52,6 +53,7 @@ def is_platform_owned(path: str) -> bool:
 @dataclass
 class PipelineState:
     spec: str
+    stack: Stack = Stack.PYTHON
     limits: Limits = field(default_factory=Limits)
     max_repair_rounds: int = 1
     requirements: Requirements | None = None
@@ -96,7 +98,7 @@ class PipelineState:
         return accepted, dropped
 
     def validate(self) -> ValidationReport:
-        report = validate_project(list(self.files.values()), self.architecture)
+        report = validate_project(list(self.files.values()), self.architecture, self.stack)
         report = report.model_copy(update={"issues": [*self.rejected, *report.issues]})
         self.validation = report
         return report
@@ -139,10 +141,10 @@ class RequirementsAnalyst:
         response = await llm.generate(
             LLMRequest(
                 agent="analyst",
-                system=prompts.ANALYST,
+                system=prompts.system("analyst", state.stack),
                 prompt=prompts.render_payload(specification=state.spec),
                 output_type=Requirements,
-                context={"spec": state.spec},
+                context={"spec": state.spec, "stack": state.stack.value},
                 effort="medium",
             )
         )
@@ -166,10 +168,10 @@ class Architect:
         response = await llm.generate(
             LLMRequest(
                 agent="architect",
-                system=prompts.ARCHITECT,
+                system=prompts.system("architect", state.stack),
                 prompt=prompts.render_payload(requirements=requirements.model_dump()),
                 output_type=ArchitectureSpec,
-                context={"requirements": requirements.model_dump()},
+                context={"requirements": requirements.model_dump(), "stack": state.stack.value},
                 effort="high",
             )
         )
@@ -213,7 +215,7 @@ class CodeGenerator:
         response = await llm.generate(
             LLMRequest(
                 agent="coder",
-                system=prompts.CODER,
+                system=prompts.system("coder", state.stack),
                 prompt=prompts.render_payload(
                     requirements=requirements.model_dump(),
                     architecture=architecture.model_dump(),
@@ -222,6 +224,7 @@ class CodeGenerator:
                 context={
                     "requirements": requirements.model_dump(),
                     "architecture": architecture.model_dump(),
+                    "stack": state.stack.value,
                 },
                 effort="high",
             )
@@ -249,7 +252,7 @@ class DevOpsEngineer:
         response = await llm.generate(
             LLMRequest(
                 agent="devops",
-                system=prompts.DEVOPS,
+                system=prompts.system("devops", state.stack),
                 prompt=prompts.render_payload(
                     requirements=requirements.model_dump(),
                     deployment=architecture.deployment.model_dump(),
@@ -260,6 +263,7 @@ class DevOpsEngineer:
                     "requirements": requirements.model_dump(),
                     "architecture": architecture.model_dump(),
                     "files": file_list,
+                    "stack": state.stack.value,
                 },
                 effort="medium",
             )
@@ -301,7 +305,7 @@ class Reviewer:
             response = await llm.generate(
                 LLMRequest(
                     agent="coder.repair",
-                    system=prompts.REPAIR,
+                    system=prompts.system("repair", state.stack),
                     prompt=prompts.render_payload(
                         problems="\n".join(repair.problems),
                         files=[f.model_dump() for f in repair.files],
@@ -336,7 +340,7 @@ class Reviewer:
         review_response = await llm.generate(
             LLMRequest(
                 agent="reviewer",
-                system=prompts.REVIEWER,
+                system=prompts.system("reviewer", state.stack),
                 prompt=prompts.render_payload(
                     requirements=requirements.model_dump(),
                     architecture=architecture.model_dump(),
@@ -350,6 +354,7 @@ class Reviewer:
                     "validation": report.model_dump(),
                     "files": sorted(state.files),
                     "tests": tests.model_dump(mode="json") if tests is not None else None,
+                    "stack": state.stack.value,
                 },
                 effort="medium",
             )
@@ -397,7 +402,7 @@ class Reviewer:
             response = await llm.generate(
                 LLMRequest(
                     agent="coder.repair",
-                    system=prompts.TEST_REPAIR,
+                    system=prompts.system("test_repair", state.stack),
                     prompt=prompts.render_payload(
                         problems="\n\n".join(problems),
                         files=[f.model_dump() for f in repair.files],
@@ -430,7 +435,7 @@ async def _traced_sandbox_run(state: PipelineState, attempt: int) -> SandboxResu
         attributes={"autoswe.sandbox.backend": state.sandbox.name,
                     "autoswe.repair.round": attempt, "autoswe.sandbox.files": len(state.files)},
     ) as span:  # fmt: skip
-        result = await state.sandbox.run(list(state.files.values()))
+        result = await state.sandbox.run(list(state.files.values()), state.stack)
         tests = result.tests
         span.set_attribute("autoswe.sandbox.status", result.status.value)
         span.set_attribute("autoswe.sandbox.duration_s", result.duration_s)
@@ -452,7 +457,7 @@ def _owned_by(allowed: set[str]) -> Callable[[str], bool]:
     return lambda path: path in frozen and not is_devops_path(path)
 
 
-_PY_PATH = re.compile(r"[A-Za-z0-9_./-]+\.py")
+_SOURCE_PATH = re.compile(r"[A-Za-z0-9_./-]+\.(?:py|ts|go)")
 MAX_TEST_REPAIR_FILES = 12
 
 
@@ -466,10 +471,11 @@ def _files_for_test_repair(state: PipelineState, result: SandboxResult) -> set[s
 
     for failure in result.tests.failures if result.tests else []:
         add(failure.nodeid.split("::", 1)[0])
-        for match in _PY_PATH.findall(f"{failure.details} {failure.message}"):
+        for match in _SOURCE_PATH.findall(f"{failure.details} {failure.message}"):
             add(match.removeprefix("./"))
+    suffix = profile(state.stack).source_suffix
     for path in sorted(state.files):  # timeouts and limits name no file: send the sources
-        if path.endswith(".py") and (path.startswith(("app/", "tests/")) or "/" not in path):
+        if path.endswith(suffix) and not path.startswith(("deploy/", ".github/")):
             add(path)
     return set(picked[:MAX_TEST_REPAIR_FILES])
 

@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from autoswe.models import Job, JobStatus, StageRun, StageStatus
 from autoswe.pipeline.artifacts import STAGE_LABELS, StageName
 from autoswe.pricing import usd
+from autoswe.stacks import Stack
 from autoswe.tracing import trace_id_of
 
 MIN_SPEC_CHARS = 20
@@ -31,6 +32,10 @@ class JobCreate(BaseModel):
     )
     title: str | None = Field(default=None, max_length=120)
     provider: str | None = Field(default=None, description="Defaults to the server default.")
+    stack: Stack = Field(
+        default=Stack.PYTHON,
+        description="Target stack: python (FastAPI), typescript (Node.js 24) or go",
+    )
 
     @field_validator("spec")
     @classmethod
@@ -88,6 +93,7 @@ class JobSummary(BaseModel):
     status: JobStatus
     provider: str
     model: str | None
+    stack: str = "python"
     current_stage: StageName | None
     project_name: str | None
     progress: float = Field(description="Fraction of stages finished, 0..1")
@@ -107,6 +113,7 @@ def _summary_fields(job: Job) -> dict[str, Any]:
         "status": job.status,
         "provider": job.provider,
         "model": job.model,
+        "stack": job.stack,
         "current_stage": StageName(job.current_stage) if job.current_stage else None,
         "project_name": job.project_name,
         "progress": round(done / len(job.stages), 3) if job.stages else 0.0,

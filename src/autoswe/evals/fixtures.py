@@ -8,6 +8,7 @@ named entities and fields, and HTTP endpoints the generated code must serve.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -41,6 +42,7 @@ class EvalFixture(BaseModel):
     name: str = Field(pattern=r"^[a-z0-9-]{1,40}$")
     description: str = ""
     spec: str = Field(min_length=20)
+    stack: Literal["python", "typescript", "go"] = "python"
     expected: Expectations = Field(default_factory=Expectations)
 
 

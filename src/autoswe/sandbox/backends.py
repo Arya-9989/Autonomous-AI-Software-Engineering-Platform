@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import io
 import json
 import logging
@@ -38,6 +39,13 @@ from opentelemetry import propagate
 from autoswe.pipeline.artifacts import GeneratedFile
 from autoswe.pipeline.validation import normalize_path
 from autoswe.sandbox.models import SandboxLimits, SandboxResult, SandboxStatus
+from autoswe.stacks import Stack
+
+# Go compiles the standard library into its build cache on first use; the image ships a seed
+# cache that the entry copies into /tmp, which needs room for it (and is charged to memory).
+# The seed is 112 MiB; builds add to it, and tmpfs pages count against the memory limit.
+STACK_TMP_MB = {Stack.PYTHON: 0, Stack.TYPESCRIPT: 0, Stack.GO: 384}
+STACK_MEMORY_MB = {Stack.PYTHON: 0, Stack.TYPESCRIPT: 0, Stack.GO: 1024}
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +56,15 @@ IMAGE_ENTRY = "/opt/autoswe-sandbox/entry.py"
 IMAGE_WORKSPACE = "/workspace"
 IMAGE_TMP = "/tmp"  # noqa: S108 - a private tmpfs inside the sandbox container, not the host's
 _TMPFS_FLAGS = "rw,nosuid,nodev,noexec,mode=1777"
+
+
+def _tmp_flags(stack: Stack) -> str:
+    """``go test`` executes the test binary it compiles under GOTMPDIR (/tmp), so Go runs get an
+    exec-able /tmp. That code is the generated project running, which the sandbox exists to
+    contain; the workspace stays noexec, and every other limit applies unchanged."""
+    return _TMPFS_FLAGS.replace("noexec", "exec") if stack is Stack.GO else _TMPFS_FLAGS
+
+
 SANDBOX_UID = "10002:10002"
 CONTAINER_LABEL = "autoswe.sandbox"
 # Container start-up and teardown are not the code's time: allow this on top of the limit.
@@ -59,7 +76,9 @@ _STDERR_CAP = 64_000
 class Sandbox(Protocol):
     name: str
 
-    async def run(self, files: Sequence[GeneratedFile]) -> SandboxResult: ...
+    async def run(
+        self, files: Sequence[GeneratedFile], stack: Stack = Stack.PYTHON
+    ) -> SandboxResult: ...
 
 
 def workspace_archive(files: Sequence[GeneratedFile]) -> bytes:
@@ -148,8 +167,12 @@ class DockerSandbox:
         pool: str = "default",
         max_concurrent: int = 2,
         startup_grace_s: float = STARTUP_GRACE_S,
+        images: dict[Stack, str] | None = None,
     ) -> None:
         self.image = image
+        # The image per stack; Python's is ``image``. A stack without one is refused, not run
+        # in the wrong image.
+        self.images = {Stack.PYTHON: image, **(images or {})}
         self.startup_grace_s = startup_grace_s
         self.limits = limits
         self.runtime = runtime
@@ -160,24 +183,38 @@ class DockerSandbox:
 
     @property
     def isolation(self) -> str:
+        return self.isolation_for(Stack.PYTHON)
+
+    def isolation_for(self, stack: Stack) -> str:
+        """What a run on ``stack`` is isolated by, with the limits that stack actually gets."""
+        limits = self.limits_for(stack)
         runtime = f", runtime {self.runtime}" if self.runtime else ""
+        exec_tmp = ", exec /tmp (go test)" if stack is Stack.GO else ""
         return (
-            f"container per run{runtime}: no network, read-only root fs, tmpfs workspace, "
-            f"uid {SANDBOX_UID.partition(':')[0]}, all capabilities dropped, no-new-privileges, "
-            f"{self.limits.memory_mb} MiB memory, {self.limits.cpus:g} CPU, "
-            f"{self.limits.pids} pids, {self.limits.timeout_s:g} s"
+            f"container per run{runtime}: no network, read-only root fs, tmpfs workspace"
+            f"{exec_tmp}, uid {SANDBOX_UID.partition(':')[0]}, all capabilities dropped, "
+            f"no-new-privileges, {limits.memory_mb} MiB memory, {limits.cpus:g} CPU, "
+            f"{limits.pids} pids, {limits.timeout_s:g} s"
         )
 
-    def run_args(self, container: str) -> list[str]:
-        """The full ``docker run`` argument vector. Built here only; callers supply nothing."""
+    def limits_for(self, stack: Stack) -> SandboxLimits:
         limits = self.limits
+        return dataclasses.replace(
+            limits,
+            tmp_mb=max(limits.tmp_mb, STACK_TMP_MB[stack]),
+            memory_mb=max(limits.memory_mb, STACK_MEMORY_MB[stack]),
+        )
+
+    def run_args(self, container: str, stack: Stack = Stack.PYTHON) -> list[str]:
+        """The full ``docker run`` argument vector. Built here only; callers supply nothing."""
+        limits = self.limits_for(stack)
         args = [
             "run", "--interactive", "--pull=never", "--name", container,
             "--label", f"{CONTAINER_LABEL}=1", "--label", f"{CONTAINER_LABEL}.pool={self.pool}",
             "--network", "none",
             "--read-only",
             "--tmpfs", f"{IMAGE_WORKSPACE}:{_TMPFS_FLAGS},size={limits.workspace_mb}m",
-            "--tmpfs", f"{IMAGE_TMP}:{_TMPFS_FLAGS},size={limits.tmp_mb}m",
+            "--tmpfs", f"{IMAGE_TMP}:{_tmp_flags(stack)},size={limits.tmp_mb}m",
             "--user", SANDBOX_UID,
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges:true",
@@ -196,7 +233,8 @@ class DockerSandbox:
         if self.runtime:
             args += ["--runtime", self.runtime]
         args += [
-            self.image, "python", IMAGE_ENTRY, "--workspace", IMAGE_WORKSPACE, "--stdin-tar",
+            self.images[stack], "python", IMAGE_ENTRY, "--stack", stack.value,
+            "--workspace", IMAGE_WORKSPACE, "--stdin-tar",
             "--max-archive-bytes", str(limits.max_archive_bytes),
             "--deadline-s", f"{max(limits.timeout_s - 2, 1):g}",
             "--cgroup-events",
@@ -218,9 +256,12 @@ class DockerSandbox:
         return proc.returncode or 0, out.decode("utf-8", "replace")
 
     async def ready(self) -> tuple[bool, str]:
-        code, out = await self._docker("image", "inspect", "--format", "{{.Id}}", self.image)
-        if code != 0:
-            return False, f"sandbox image {self.image} is not available: {out.strip()[:200]}"
+        for stack, image in self.images.items():
+            code, out = await self._docker("image", "inspect", "--format", "{{.Id}}", image)
+            if code != 0:
+                return False, (
+                    f"sandbox image {image} ({stack.value}) is not available: {out.strip()[:200]}"
+                )
         return True, "ok"
 
     async def remove_leftovers(self) -> int:
@@ -233,23 +274,31 @@ class DockerSandbox:
             await self._docker("rm", "-f", *ids)
         return len(ids)
 
-    async def run(self, files: Sequence[GeneratedFile]) -> SandboxResult:
+    async def run(
+        self, files: Sequence[GeneratedFile], stack: Stack = Stack.PYTHON
+    ) -> SandboxResult:
+        if stack not in self.images:
+            return SandboxResult(
+                status=SandboxStatus.ERROR, backend=self.name, isolation=self.isolation_for(stack),
+                message=f"no sandbox image is configured for {stack.value}",
+            )  # fmt: skip
         archive = workspace_archive(files)
         if len(archive) > self.limits.max_archive_bytes:
             return SandboxResult(
-                status=SandboxStatus.RESOURCE_LIMIT, backend=self.name, isolation=self.isolation,
-                limit="archive", message=f"workspace is {len(archive)} bytes",
+                status=SandboxStatus.RESOURCE_LIMIT, backend=self.name,
+                isolation=self.isolation_for(stack), limit="archive",
+                message=f"workspace is {len(archive)} bytes",
             )  # fmt: skip
         async with self._slots:
-            return await self._run(archive)
+            return await self._run(archive, stack)
 
-    async def _run(self, archive: bytes) -> SandboxResult:
+    async def _run(self, archive: bytes, stack: Stack = Stack.PYTHON) -> SandboxResult:
         container = f"autoswe-sbx-{uuid.uuid4().hex[:12]}"
         started = time.monotonic()
         hard_limit = self.limits.timeout_s + self.startup_grace_s
         try:
             proc = await asyncio.create_subprocess_exec(
-                *self._cli, *self.run_args(container),
+                *self._cli, *self.run_args(container, stack),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -284,6 +333,7 @@ class DockerSandbox:
             await self._docker("rm", "-f", container)
         duration = time.monotonic() - started
         return self._classify(
+            stack,
             stdout.decode("utf-8", "replace"), stderr.decode("utf-8", "replace"),
             state, proc.returncode, duration, timed_out=timed_out, overflow=overflow,
         )  # fmt: skip
@@ -300,6 +350,7 @@ class DockerSandbox:
 
     def _classify(
         self,
+        stack: Stack,
         stdout: str,
         stderr: str,
         state: dict[str, Any],
@@ -309,12 +360,14 @@ class DockerSandbox:
         timed_out: bool,
         overflow: bool,
     ) -> SandboxResult:
-        common = {"backend": self.name, "isolation": self.isolation,
+        isolation = self.isolation_for(stack)
+        limits = self.limits_for(stack)
+        common = {"backend": self.name, "isolation": isolation,
                   "duration_s": round(duration, 3), "exit_code": exit_code}  # fmt: skip
         if timed_out:
             return SandboxResult(
                 status=SandboxStatus.TIMEOUT,
-                message=f"killed after {self.limits.timeout_s:g} s wall-clock",
+                message=f"killed after {limits.timeout_s:g} s wall-clock",
                 **common,
             )
         if overflow:
@@ -328,7 +381,7 @@ class DockerSandbox:
             base = payload or {}
             return SandboxResult.model_validate(
                 {**base, **common, "status": "resource_limit", "limit": "memory",
-                 "message": f"killed at the {self.limits.memory_mb} MiB memory limit"}
+                 "message": f"killed at the {limits.memory_mb} MiB memory limit"}
             )  # fmt: skip
         if payload is None and exit_code == 137:
             return SandboxResult(
@@ -337,7 +390,7 @@ class DockerSandbox:
                 **common,
             )  # fmt: skip
         return _result(
-            payload, backend=self.name, isolation=self.isolation, duration=duration,
+            payload, backend=self.name, isolation=isolation, duration=duration,
             exit_code=exit_code,
             fallback=f"sandbox produced no result (exit {exit_code}): {stderr.strip()[-300:]}",
         )  # fmt: skip
@@ -389,7 +442,9 @@ class LocalProcessSandbox:
             "no network or file-system isolation"
         )
 
-    async def run(self, files: Sequence[GeneratedFile]) -> SandboxResult:
+    async def run(
+        self, files: Sequence[GeneratedFile], stack: Stack = Stack.PYTHON
+    ) -> SandboxResult:
         with tempfile.TemporaryDirectory(prefix="autoswe-sbx-") as scratch:
             workspace = Path(scratch) / "workspace"
             workspace.mkdir()
@@ -400,15 +455,18 @@ class LocalProcessSandbox:
                 target = workspace / path
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(file.content, encoding="utf-8", newline="\n")
-            return await self._run(workspace)
+            return await self._run(workspace, stack)
 
-    async def _run(self, workspace: Path) -> SandboxResult:
+    async def _run(self, workspace: Path, stack: Stack = Stack.PYTHON) -> SandboxResult:
         limits = self.limits
-        argv = [self.python, str(ENTRY_DIR / "entry.py"), "--workspace", str(workspace),
+        argv = [self.python, str(ENTRY_DIR / "entry.py"), "--stack", stack.value,
+                "--workspace", str(workspace),
                 "--deadline-s", f"{max(limits.timeout_s - 2, 1):g}"]  # fmt: skip
         if not limits.typecheck:
             argv.append("--no-typecheck")
-        keep = ("PATH", "SYSTEMROOT", "WINDIR")
+        # The toolchain locations for TypeScript and Go, if a developer points at them.
+        keep = ("PATH", "SYSTEMROOT", "WINDIR", "AUTOSWE_NODE_MODULES", "AUTOSWE_NODE",
+                "AUTOSWE_GO_CACHE_SEED", "GOROOT")  # fmt: skip
         env = {key: os.environ[key] for key in keep if key in os.environ}
         kwargs: dict[str, Any] = {}
         if sys.platform != "win32":
@@ -483,8 +541,11 @@ class RemoteSandbox:
             status=SandboxStatus.ERROR, backend=self.name, isolation="unknown", message=message
         )
 
-    async def run(self, files: Sequence[GeneratedFile]) -> SandboxResult:
-        body = {"files": [{"path": f.path, "content": f.content} for f in files]}
+    async def run(
+        self, files: Sequence[GeneratedFile], stack: Stack = Stack.PYTHON
+    ) -> SandboxResult:
+        body = {"files": [{"path": f.path, "content": f.content} for f in files],
+                "stack": stack.value}  # fmt: skip
         headers = {"Authorization": f"Bearer {self._token}"}
         propagate.inject(headers)  # traceparent: the runner's spans join the job's trace
         async with httpx2.AsyncClient(timeout=self._timeout, transport=self._transport) as client:

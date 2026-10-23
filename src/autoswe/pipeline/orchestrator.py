@@ -37,6 +37,7 @@ from autoswe.pipeline.validation import Limits
 from autoswe.pricing import PricingTable, usd
 from autoswe.repository import JobRepository
 from autoswe.sandbox.backends import Sandbox
+from autoswe.stacks import Stack
 from autoswe.tracing import mark_error, tracer
 
 logger = logging.getLogger(__name__)
@@ -157,10 +158,12 @@ class Orchestrator:
             llm = self._metered(job, self._registry.get(job.provider))
             span.set_attributes({
                 "autoswe.job.owner": job.owner, "autoswe.provider": job.provider,
+                "autoswe.stack": job.stack,
                 "gen_ai.request.model": llm.model, "autoswe.request_id": job.request_id or "",
             })  # fmt: skip
             state = PipelineState(
                 spec=job.spec,
+                stack=Stack(job.stack),
                 limits=self._limits,
                 max_repair_rounds=self._max_repair_rounds,
                 sandbox=self._sandbox,

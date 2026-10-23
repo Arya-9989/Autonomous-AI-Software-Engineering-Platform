@@ -11,6 +11,7 @@ from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from autoswe.sandbox.models import SandboxLimits
+from autoswe.stacks import Stack
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 SandboxBackend = Literal["none", "docker", "local", "remote"]
@@ -28,6 +29,8 @@ class SandboxSettings(BaseSettings):
     # local: a plain subprocess, NOT isolated (development only).
     sandbox_backend: SandboxBackend = "none"
     sandbox_image: str = "autoswe-sandbox:local"
+    sandbox_image_typescript: str = "autoswe-sandbox-node:local"
+    sandbox_image_go: str = "autoswe-sandbox-go:local"
     sandbox_docker_binary: str = "docker"
     # e.g. "runsc" to run every sandbox container under gVisor.
     sandbox_docker_runtime: str | None = None
@@ -63,6 +66,9 @@ class SandboxSettings(BaseSettings):
         if token is not None and len(token.get_secret_value()) < 16:
             raise ValueError("SANDBOX_RUNNER_TOKEN must be at least 16 characters.")
         return self
+
+    def sandbox_stack_images(self) -> dict[Stack, str]:
+        return {Stack.TYPESCRIPT: self.sandbox_image_typescript, Stack.GO: self.sandbox_image_go}
 
     def sandbox_limits(self) -> SandboxLimits:
         return SandboxLimits(

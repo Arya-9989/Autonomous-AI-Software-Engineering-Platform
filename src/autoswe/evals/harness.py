@@ -26,6 +26,7 @@ from autoswe.metering import MeteredProvider
 from autoswe.pipeline.agents import PipelineState, run_pipeline
 from autoswe.pricing import PricingTable, usd
 from autoswe.sandbox.backends import Sandbox
+from autoswe.stacks import Stack
 
 
 @dataclass
@@ -48,7 +49,12 @@ async def run_fixture(
     fixture: EvalFixture, llm: LLMProvider, sandbox: Sandbox | None, repair_rounds: int
 ) -> FixtureResult:
     metered = MeteredProvider(llm, PricingTable.load())
-    state = PipelineState(spec=fixture.spec, sandbox=sandbox, max_test_repair_rounds=repair_rounds)
+    state = PipelineState(
+        spec=fixture.spec,
+        stack=Stack(fixture.stack),
+        sandbox=sandbox,
+        max_test_repair_rounds=repair_rounds,
+    )
 
     async def quiet(_: str) -> None:
         return None
@@ -131,7 +137,10 @@ async def record_suite(
     for fixture in fixtures:
         recorder = RecordingProvider(inner)
         state = PipelineState(
-            spec=fixture.spec, sandbox=sandbox, max_test_repair_rounds=repair_rounds
+            spec=fixture.spec,
+            stack=Stack(fixture.stack),
+            sandbox=sandbox,
+            max_test_repair_rounds=repair_rounds,
         )
 
         async def quiet(_: str) -> None:
