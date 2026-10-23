@@ -382,7 +382,7 @@ Authenticate with `Authorization: Bearer <key>` or `X-API-Key: <key>`. Interacti
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `POST` | `/api/v1/jobs` | Submit `{spec, title?, provider?, stack?}` (`stack`: `python`, `typescript` or `go`); returns `202` with the job, or `402` with `code: token_budget_exceeded` when the principal's budget cannot cover the reservation |
+| `POST` | `/api/v1/jobs` | Submit `{spec, title?, provider?, stack?}` (`stack`: `python`, `typescript` or `go`); returns `202` with the job, or `402` with `code: token_budget_exceeded` when the principal's budget cannot cover the reservation. An optional `Idempotency-Key` header makes retries safe: a repeat returns the same job with `Idempotent-Replayed: true`, and reusing the key with a different body is a `422` ([ADR 0010](docs/adr/0010-idempotent-job-submission.md)) |
 | `GET` | `/api/v1/jobs` | Your jobs, newest first (`limit`; page with `before` and `before_id` from `next_cursor` and `next_cursor_id`) |
 | `GET` | `/api/v1/jobs/{id}` | Status, per-stage progress, durations, tokens (cache included), cost, validation and test summaries, `trace_id`, `request_id`, `error_code` |
 | `GET` | `/api/v1/jobs/{id}/events` | **SSE** stream; replays history, follows live, ends with `end` |
