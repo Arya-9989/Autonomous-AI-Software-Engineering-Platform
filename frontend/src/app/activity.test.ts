@@ -19,4 +19,13 @@ suite("activity log lines", () => {
     const job = event({ event: "job.failed", error: "Worker heartbeat lost; job abandoned." });
     expect(describe(job, log).text).toBe("Worker heartbeat lost; job abandoned.");
   });
+
+  it("describes a transient retry and the resume that follows it", () => {
+    const retry = event({ event: "job.retry_scheduled", stage: "architect", attempt: 1, delay_s: 30 });
+    expect(describe(retry).text).toBe("Provider error; retry 1 in 30.0 s, resuming at the architect");
+    expect(describe(event({ event: "job.resumed", stages: ["analyze"] })).text).toBe(
+      "Resumed; 1 completed stage kept",
+    );
+    expect(describe(event({ event: "job.retried" })).text).toBe("Retry requested");
+  });
 });

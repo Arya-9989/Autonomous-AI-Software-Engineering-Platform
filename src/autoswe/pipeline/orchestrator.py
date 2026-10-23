@@ -10,12 +10,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import random
 import time
 from collections.abc import Sequence
 from typing import Any
 
 from opentelemetry import propagate
 from opentelemetry.trace import Span, SpanKind
+from pydantic import ValidationError
 
 from autoswe.budget import BudgetGuard, BudgetPolicy, period_bounds
 from autoswe.db import Database
@@ -26,13 +28,20 @@ from autoswe.logging_config import job_id_var
 from autoswe.metering import MeteredProvider, UsageMeter
 from autoswe.models import Job, JobStatus, StageStatus, utcnow
 from autoswe.observability import (
+    JOB_RETRIES,
     JOBS_FINISHED,
     JOBS_RUNNING,
     STAGE_DURATION,
     VALIDATION_ISSUES,
 )
 from autoswe.pipeline.agents import Agent, PipelineState, StageResult, default_agents
-from autoswe.pipeline.artifacts import STAGE_LABELS, StageName
+from autoswe.pipeline.artifacts import (
+    STAGE_LABELS,
+    ArchitectureSpec,
+    GeneratedFile,
+    Requirements,
+    StageName,
+)
 from autoswe.pipeline.validation import Limits
 from autoswe.pricing import PricingTable, usd
 from autoswe.repository import JobRepository
@@ -63,6 +72,8 @@ class Orchestrator:
         max_test_repair_rounds: int = 2,
         pricing: PricingTable | None = None,
         budget: BudgetPolicy | None = None,
+        transient_retries: int = 0,
+        retry_delay_s: float = 30.0,
     ) -> None:
         self._db = db
         self._registry = registry
@@ -74,6 +85,8 @@ class Orchestrator:
         self._max_test_repair_rounds = max_test_repair_rounds
         self._pricing = pricing or PricingTable.load()
         self._budget = budget or BudgetPolicy(None, {}, "month", 200_000)
+        self._transient_retries = transient_retries
+        self._retry_delay_s = retry_delay_s
 
     # --- persistence helpers ----------------------------------------------------------------------
 
@@ -169,8 +182,15 @@ class Orchestrator:
                 sandbox=self._sandbox,
                 max_test_repair_rounds=self._max_test_repair_rounds,
             )
+            restored = await self._restore(job, state)
+            if restored:
+                await self._emit(
+                    job_id, "job.resumed", stages=[stage.value for stage in restored],
+                    attempt=job.retries + 1,
+                )  # fmt: skip
+                span.set_attribute("autoswe.job.resumed_stages", [s.value for s in restored])
             await self._emit(job_id, "job.started", provider=llm.name, model=llm.model)
-            status = await self._run_stages(job_id, state, llm)
+            status = await self._run_stages(job_id, state, llm, restored, job.retries)
             total = llm.meter.total
             span.set_attributes({
                 "gen_ai.usage.input_tokens": total.input_tokens,
@@ -192,7 +212,10 @@ class Orchestrator:
                 await heartbeat
             JOBS_RUNNING.dec()
             job_id_var.reset(token)
-        JOBS_FINISHED.labels(provider_name, status.value).inc()
+        if status is JobStatus.QUEUED:
+            JOB_RETRIES.labels("transient").inc()  # requeued to resume later, not finished
+        else:
+            JOBS_FINISHED.labels(provider_name, status.value).inc()
         return status
 
     def _metered(self, job: Job, provider: LLMProvider) -> MeteredProvider:
@@ -220,14 +243,81 @@ class Orchestrator:
             )
         return MeteredProvider(provider, self._pricing, meter, guard)
 
+    async def _restore(self, job: Job, state: PipelineState) -> list[StageName]:
+        """Put the artifacts of the stages an earlier attempt completed back into ``state``.
+
+        Walks the pipeline in order and stops at the first stage that did not succeed, or whose
+        stored artifact no longer validates (an upgrade changed its schema): that stage and every
+        later one run again, and their stale files are discarded.
+        """
+        succeeded = {s.name for s in job.stages if s.status is StageStatus.SUCCEEDED}
+        restored: list[StageName] = []
+        for agent in self._agents:
+            stage = agent.stage
+            if stage.value not in succeeded:
+                break
+            try:
+                if stage is StageName.ANALYZE:
+                    state.requirements = Requirements.model_validate(job.requirements)
+                elif stage is StageName.ARCHITECT:
+                    state.architecture = ArchitectureSpec.model_validate(job.architecture)
+            except ValidationError:
+                logger.warning("checkpoint no longer valid; rerunning", extra={"stage": stage})
+                break
+            restored.append(stage)
+        if not succeeded:
+            return restored
+        keep = {stage.value for stage in restored}
+        async with self._db.session() as session:
+            repo = JobRepository(session)
+            for file in await repo.list_files(job.id):
+                if file.stage in keep:
+                    state.files[file.path] = GeneratedFile(
+                        path=file.path, content=file.content, description=file.description
+                    )
+                    state.file_origin[file.path] = StageName(file.stage)
+            await repo.discard_files(job.id, keep=keep)
+        return restored
+
+    def _retry_delay(self, attempt: int) -> float:
+        """Exponential backoff with +/-20% jitter (replicas retrying together spread out)."""
+        delay: float = min(self._retry_delay_s * 2.0 ** (attempt - 1), 600.0)
+        return delay * random.uniform(0.8, 1.2)  # noqa: S311 - jitter, not security
+
+    async def _retry_later(
+        self, job_id: str, stage: StageName, message: str, code: str | None, attempt: int
+    ) -> JobStatus | None:
+        """Requeue the job to resume at ``stage``; None if it already left ``running``."""
+        delay = self._retry_delay(attempt)
+        await self._emit(job_id, "stage.failed", stage=stage.value, error=message)
+        async with self._db.session() as session:
+            retry = await JobRepository(session).schedule_retry(
+                job_id, stage=stage.value, delay_s=delay, error=message, code=code
+            )
+        self._notifier.notify_job(job_id)
+        if retry is None:
+            return None
+        extra = {"stage": stage.value, "retry": retry, "delay_s": round(delay, 1)}
+        logger.warning("transient failure; job requeued", extra=extra)
+        return JobStatus.QUEUED
+
     async def _persist_usage(self, job_id: str, llm: LLMProvider) -> None:
         if isinstance(llm, MeteredProvider):
             await self._update_job(job_id, **_usage_columns(llm.meter.total))
 
-    async def _run_stages(self, job_id: str, state: PipelineState, llm: LLMProvider) -> JobStatus:
+    async def _run_stages(
+        self,
+        job_id: str,
+        state: PipelineState,
+        llm: LLMProvider,
+        restored: Sequence[StageName] = (),
+        retries: int = 0,
+    ) -> JobStatus:
         meter = llm.meter if isinstance(llm, MeteredProvider) else UsageMeter()
         for agent in self._agents:
             stage = agent.stage
+            if stage in restored:
+                continue  # completed by an earlier attempt; its artifacts are in ``state``
             if await self._cancel_requested(job_id):
                 return await self._cancelled(job_id)
 
@@ -244,7 +334,7 @@ class Orchestrator:
                 record_exception=False,
                 set_status_on_exception=False,
             ) as span:
-                failed = await self._run_stage(job_id, agent, state, llm, meter, log, span)
+                failed = await self._run_stage(job_id, agent, state, llm, meter, log, span, retries)
             if failed is not None:
                 return failed
 
@@ -259,8 +349,9 @@ class Orchestrator:
         meter: UsageMeter,
         log: Any,
         span: Span,
+        retries: int = 0,
     ) -> JobStatus | None:
-        """One agent; returns the job's terminal status if the stage failed it."""
+        """One agent; returns the job's status if the stage ended its run (failed or requeued)."""
         stage = agent.stage
         started = time.perf_counter()
         before = meter.total
@@ -271,7 +362,13 @@ class Orchestrator:
             await self._persist_usage(job_id, llm)
             code = getattr(exc, "code", None)
             mark_error(span, exc, code or type(exc).__name__)
-            return await self._fail(job_id, stage, f"{STAGE_LABELS[stage]}: {exc}", code=code)
+            message = f"{STAGE_LABELS[stage]}: {exc}"
+            if exc.retryable and retries < self._transient_retries:
+                span.set_attribute("autoswe.stage.retry_scheduled", True)
+                requeued = await self._retry_later(job_id, stage, message, code, retries + 1)
+                if requeued is not None:
+                    return requeued
+            return await self._fail(job_id, stage, message, code=code)
         except Exception as exc:
             logger.exception("stage crashed", extra={"stage": stage.value})
             self._observe(stage, llm.name, "error", started)

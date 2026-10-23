@@ -48,6 +48,12 @@ JOBS_FINISHED = Counter(
     ["provider", "status"],
     registry=REGISTRY,
 )
+JOB_RETRIES = Counter(
+    "autoswe_job_retries_total",
+    "Jobs requeued to resume at a stage: transient (automatic, after a provider error) or manual",
+    ["reason"],
+    registry=REGISTRY,
+)
 JOBS_RUNNING = Gauge(
     "autoswe_jobs_running", "Jobs currently executing in this process", registry=REGISTRY
 )

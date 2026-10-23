@@ -96,9 +96,15 @@ async def test_shutdown_requeues_in_flight_jobs(harness_factory: HarnessFactory)
 
     job = (await harness.client.get(f"/api/v1/jobs/{job_id}", headers=ALICE)).json()
     assert job["status"] == "queued"
-    assert {s["status"] for s in job["stages"]} == {"pending"}
+    # Checkpoints survive the requeue: the next worker resumes at the coder, so the analyst and
+    # architect are not run (or billed) twice. The interrupted stage starts over.
+    statuses = [s["status"] for s in job["stages"]]
+    assert statuses == ["succeeded", "succeeded", "pending", "pending", "pending"]
     files = (await harness.client.get(f"/api/v1/jobs/{job_id}/files", headers=ALICE)).json()
-    assert files == []
+    assert files and {f["stage"] for f in files} == {"architect"}
+    assert (
+        await harness.client.get(f"/api/v1/jobs/{job_id}/requirements", headers=ALICE)
+    ).status_code == 200
 
 
 async def test_stale_running_jobs_are_reaped(harness_factory: HarnessFactory) -> None:

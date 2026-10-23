@@ -180,6 +180,13 @@ class JobDetail(JobSummary):
         default=None, description="OpenTelemetry trace of the submission and the job's run"
     )
     cancel_requested: bool
+    retries: int = Field(
+        default=0, description="Automatic retries after transient provider errors (this run)"
+    )
+    run_after: datetime | None = Field(
+        default=None,
+        description="A job requeued for a retry is not picked up before this time",
+    )
     validation: ValidationSummary | None
     tests: TestsSummary | None = Field(
         default=None, description="Sandboxed test run; null when tests were not executed"
@@ -217,6 +224,8 @@ class JobDetail(JobSummary):
             request_id=job.request_id,
             trace_id=trace_id_of(job.trace_context),
             cancel_requested=job.cancel_requested,
+            retries=job.retries,
+            run_after=job.run_after if job.status is JobStatus.QUEUED else None,
             validation=validation,
             tests=TestsSummary.from_report(job.test_report) if job.test_report else None,
             review_score=(job.review or {}).get("score"),

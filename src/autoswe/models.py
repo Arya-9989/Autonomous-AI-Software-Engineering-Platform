@@ -130,6 +130,10 @@ class Job(Base):
     # Where the project was published (repository, PR); {"status": "publishing"} while it runs.
     publication: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     worker_id: Mapped[str | None] = mapped_column(String(64))
+    # Automatic retries after transient provider failures, and the earliest time a job that was
+    # requeued for one may be claimed again (None: as soon as a worker is free).
+    retries: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    run_after: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
     started_at: Mapped[datetime | None] = mapped_column(UTCDateTime)

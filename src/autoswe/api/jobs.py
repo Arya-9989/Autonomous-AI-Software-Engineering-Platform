@@ -20,7 +20,12 @@ from autoswe.llm.base import is_metered
 from autoswe.llm.registry import UnknownProviderError
 from autoswe.logging_config import request_id_var
 from autoswe.models import Job, JobStatus
-from autoswe.observability import BUDGET_REJECTIONS, GITHUB_PUBLISH, JOBS_SUBMITTED
+from autoswe.observability import (
+    BUDGET_REJECTIONS,
+    GITHUB_PUBLISH,
+    JOB_RETRIES,
+    JOBS_SUBMITTED,
+)
 from autoswe.pipeline.artifacts import (
     ArchitectureSpec,
     GeneratedFile,
@@ -169,6 +174,68 @@ async def cancel_job(
         raise HTTPException(
             status.HTTP_409_CONFLICT, detail=f"Job already {refreshed.status.value}"
         )
+    return JobDetail.from_model(refreshed)
+
+
+@router.post(
+    "/{job_id}/retry",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=JobDetail,
+    responses={402: {"description": "The token budget has no room for the job's reservation"},
+               409: {"description": "Only a failed job can be retried"},
+               429: {"description": "Too many queued or running jobs for this API key"}},
+)  # fmt: skip
+async def retry_job(
+    job_id: str, principal: PrincipalDep, repo: RepositoryDep, services: ServicesDep
+) -> JobDetail:
+    """Requeue a failed job. It resumes at the stage that failed: the stages that completed
+    keep their results (and were already paid for), so only the rest runs again."""
+    job = await _owned_job(repo, job_id, principal.name)
+    if job.status is not JobStatus.FAILED:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail=f"Only a failed job can be retried; it is {job.status.value}",
+        )
+    limit = services.settings.max_active_jobs_per_owner
+    if await repo.count_active(principal.name) >= limit:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"At most {limit} queued or running jobs per API key.",
+        )
+    try:
+        provider = services.registry.get(job.provider)
+    except UnknownProviderError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail=f"The job's provider '{job.provider}' is no longer configured",
+        ) from None
+    reservation = None
+    if is_metered(provider):
+        policy = services.budget
+        budget = policy.limit_for(principal.name)
+        start, _ = period_bounds(policy.period)
+        reservation = Reservation(start, policy.reservation_for(budget), budget)
+    try:
+        retried = await repo.retry_failed(job_id, principal.name, reservation)
+    except BudgetRefusedError:
+        BUDGET_REJECTIONS.labels("retry").inc()
+        state = await UsageRepository(repo.session).state(services.budget, principal.name)
+        raise TokenBudgetExceededError(
+            f"Token budget exhausted: {state.used} of {state.limit} tokens used and "
+            f"{state.reserved} reserved by running jobs this {state.period}",
+            state,
+        ) from None
+    if not retried:  # it changed state between the read above and the retry
+        current = await repo.get(job_id)
+        detail = current.status.value if current else "gone"
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail=f"Only a failed job can be retried; it is {detail}"
+        )
+    JOB_RETRIES.labels("manual").inc()
+    services.notifier.notify_job(job_id)
+    services.notifier.notify_queue()
+    refreshed = await repo.get(job_id)
+    assert refreshed is not None
     return JobDetail.from_model(refreshed)
 
 

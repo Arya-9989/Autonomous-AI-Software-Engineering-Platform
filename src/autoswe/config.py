@@ -120,6 +120,11 @@ class Settings(SandboxSettings):
     job_stale_after_s: float = Field(default=300.0, gt=0)
     max_active_jobs_per_owner: int = Field(default=3, ge=1)
     max_repair_rounds: int = Field(default=1, ge=0, le=3)
+    # A stage that fails with a transient provider error (rate limit, overload, timeout, 5xx,
+    # after the SDK's own retries) requeues the job this many times, resuming at that stage.
+    job_transient_retries: int = Field(default=2, ge=0, le=10)
+    # Wait before the first such retry; doubles each time (with jitter), capped at 10 minutes.
+    job_retry_delay_s: float = Field(default=30.0, ge=0, le=600)
 
     # --- generated output limits ---------------------------------------------------------------
     max_generated_files: int = Field(default=200, ge=1)

@@ -20,7 +20,7 @@ from autoswe.models import (
     StageStatus,
     utcnow,
 )
-from autoswe.pipeline.artifacts import STAGE_ORDER, GeneratedFile
+from autoswe.pipeline.artifacts import STAGE_ORDER, GeneratedFile, StageName
 
 ACTIVE_STATUSES = (JobStatus.QUEUED, JobStatus.RUNNING)
 
@@ -204,6 +204,13 @@ class JobRepository:
         )
         return [tuple(row) for row in (await self.session.execute(query)).all()]  # type: ignore[misc]
 
+    async def discard_files(self, job_id: str, *, keep: set[str]) -> None:
+        """Delete the job's files produced by any stage outside ``keep``."""
+        await self.session.execute(
+            delete(JobFile).where(JobFile.job_id == job_id, JobFile.stage.not_in(keep))
+        )
+        await self.session.commit()
+
     async def get_file(self, job_id: str, path: str) -> JobFile | None:
         query = select(JobFile).where(JobFile.job_id == job_id, JobFile.path == path)
         return (await self.session.execute(query)).scalar_one_or_none()
@@ -231,20 +238,21 @@ class JobRepository:
         The compare-and-set ``UPDATE ... WHERE status = 'queued'`` means two workers (or two
         replicas) racing for the same row cannot both win, on SQLite and PostgreSQL alike.
         """
+        now = utcnow()
+        due = or_(Job.run_after.is_(None), Job.run_after <= now)
         candidate = (
             await self.session.execute(
                 select(Job.id)
-                .where(Job.status == JobStatus.QUEUED)
+                .where(Job.status == JobStatus.QUEUED, due)
                 .order_by(Job.created_at, Job.id)
                 .limit(1)
             )
         ).scalar_one_or_none()
         if candidate is None:
             return None
-        now = utcnow()
         result = await self.session.execute(
             update(Job)
-            .where(Job.id == candidate, Job.status == JobStatus.QUEUED)
+            .where(Job.id == candidate, Job.status == JobStatus.QUEUED, due)
             .values(status=JobStatus.RUNNING, worker_id=worker_id, started_at=now,
                     heartbeat_at=now, updated_at=now)
             .execution_options(synchronize_session=False)
@@ -341,39 +349,119 @@ class JobRepository:
         )
         await self.session.commit()
 
-    async def reset_for_retry(self, job_id: str) -> bool:
-        """Put an interrupted job back in the queue with a clean slate.
+    async def _requeue(self, job_id: str, from_status: JobStatus, **values: Any) -> bool:
+        """Move a ``from_status`` job back to ``queued``, keeping every stage that succeeded.
 
-        Only a job that is still ``running`` is requeued; one that was reaped or finished in the
-        meantime keeps its outcome. Returns whether the job was requeued.
+        Completed stages keep their summary, usage, files and artifacts, so the next attempt
+        resumes at the first stage that did not finish instead of paying for the whole pipeline
+        again. Job-level token and cost totals are kept too: earlier attempts were billed.
+        Does not commit; returns whether the compare-and-set on the status won.
         """
-        requeued = await self.session.execute(
+        moved = await self.session.execute(
             update(Job)
-            .where(Job.id == job_id, Job.status == JobStatus.RUNNING)
-            .values(status=JobStatus.QUEUED, updated_at=utcnow())
+            .where(Job.id == job_id, Job.status == from_status)
+            .values(status=JobStatus.QUEUED, current_stage=None, worker_id=None, started_at=None,
+                    heartbeat_at=None, updated_at=utcnow(), **values)
             .execution_options(synchronize_session=False)
-        )
-        if _rowcount(requeued) != 1:
-            await self.session.rollback()
+        )  # fmt: skip
+        if _rowcount(moved) != 1:
             return False
-        await self.session.execute(delete(JobFile).where(JobFile.job_id == job_id))
+        done = list(
+            (
+                await self.session.execute(
+                    select(StageRun.name).where(
+                        StageRun.job_id == job_id, StageRun.status == StageStatus.SUCCEEDED
+                    )
+                )
+            ).scalars()
+        )
+        await self.session.execute(
+            delete(JobFile).where(JobFile.job_id == job_id, JobFile.stage.not_in(done))
+        )
         await self.session.execute(
             update(StageRun)
-            .where(StageRun.job_id == job_id)
+            .where(StageRun.job_id == job_id, StageRun.status != StageStatus.SUCCEEDED)
             .values(status=StageStatus.PENDING, summary=None, started_at=None, finished_at=None,
                     input_tokens=0, output_tokens=0, cache_read_input_tokens=0,
                     cache_creation_input_tokens=0, cost_microusd=0)
         )  # fmt: skip
-        # Job-level token and cost totals are kept: the interrupted attempt was billed, and
-        # the job keeps its budget reservation while it waits to run again.
-        await self.session.execute(
-            update(Job)
-            .where(Job.id == job_id)
-            .values(status=JobStatus.QUEUED, current_stage=None, worker_id=None, started_at=None,
-                    heartbeat_at=None, requirements=None, architecture=None, validation=None,
-                    review=None, test_report=None, updated_at=utcnow())
-        )  # fmt: skip
+        # Artifacts of stages that did not finish (the review's always: it is the last stage).
+        cleared: dict[str, Any] = {"validation": None, "review": None, "test_report": None}
+        if StageName.ANALYZE.value not in done:
+            cleared |= {"requirements": None, "project_name": None}
+        if StageName.ARCHITECT.value not in done:
+            cleared["architecture"] = None
+        await self.session.execute(update(Job).where(Job.id == job_id).values(**cleared))
+        return True
+
+    async def reset_for_retry(self, job_id: str) -> bool:
+        """Put an interrupted job (worker shutdown) back in the queue, keeping its checkpoints.
+
+        Only a job that is still ``running`` is requeued; one that was reaped or finished in the
+        meantime keeps its outcome. The job keeps its budget reservation while it waits.
+        """
+        if not await self._requeue(job_id, JobStatus.RUNNING, run_after=None):
+            await self.session.rollback()
+            return False
         self.session.add(JobEvent(job_id=job_id, type="job.requeued", payload={}))
+        await self.session.commit()
+        return True
+
+    async def schedule_retry(
+        self, job_id: str, *, stage: str, delay_s: float, error: str, code: str | None = None
+    ) -> int | None:
+        """Requeue a running job after a transient provider failure in ``stage``.
+
+        It becomes claimable again ``delay_s`` from now and resumes at ``stage``; it keeps its
+        budget reservation. Returns the retry number, or None if the job had already left
+        ``running`` (reaped or finished), in which case nothing changes.
+        """
+        run_after = utcnow() + timedelta(seconds=delay_s)
+        if not await self._requeue(
+            job_id, JobStatus.RUNNING, retries=Job.retries + 1, run_after=run_after
+        ):
+            await self.session.rollback()
+            return None
+        retries = (
+            await self.session.execute(select(Job.retries).where(Job.id == job_id))
+        ).scalar_one()
+        payload = {"stage": stage, "attempt": retries, "delay_s": round(delay_s, 1),
+                   "error": error, "code": code, "run_after": run_after.isoformat()}  # fmt: skip
+        self.session.add(JobEvent(job_id=job_id, type="job.retry_scheduled", payload=payload))
+        await self.session.commit()
+        return int(retries)
+
+    async def retry_failed(
+        self, job_id: str, owner: str, reservation: Reservation | None = None
+    ) -> bool:
+        """Requeue the owner's failed job, resuming at the stage that failed.
+
+        Its budget reservation was released when it failed, so a fresh one is taken in the same
+        transaction (BudgetRefusedError if it no longer fits). The automatic retry count starts
+        again from zero. Returns False when the job is not ``failed`` (or not the owner's).
+        """
+        owned = await self.session.execute(
+            select(Job.id).where(Job.id == job_id, Job.owner == owner)
+        )
+        if owned.scalar_one_or_none() is None:
+            return False
+        values: dict[str, Any] = {"error": None, "error_code": None, "finished_at": None,
+                                  "retries": 0, "run_after": None}  # fmt: skip
+        if reservation is not None:
+            values["budget_period_start"] = reservation.period_start
+            values["tokens_reserved"] = reservation.amount if reservation.limit is not None else 0
+        if not await self._requeue(job_id, JobStatus.FAILED, **values):
+            await self.session.rollback()
+            return False
+        if reservation is not None:
+            usage = UsageRepository(self.session)
+            await usage.ensure(owner, reservation.period_start)
+            if reservation.limit is not None and not await usage.try_reserve(
+                owner, reservation.period_start, reservation.amount, reservation.limit
+            ):
+                await self.session.rollback()
+                raise BudgetRefusedError(owner)
+        self.session.add(JobEvent(job_id=job_id, type="job.retried", payload={}))
         await self.session.commit()
         return True
 

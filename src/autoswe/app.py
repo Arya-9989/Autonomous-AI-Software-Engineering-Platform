@@ -57,6 +57,8 @@ def build_services(
         max_test_repair_rounds=settings.sandbox_max_repair_rounds,
         pricing=pricing,
         budget=budget,
+        transient_retries=settings.job_transient_retries,
+        retry_delay_s=settings.job_retry_delay_s,
     )
     services = Services(
         settings=settings,

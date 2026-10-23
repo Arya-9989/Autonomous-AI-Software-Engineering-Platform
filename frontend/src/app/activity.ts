@@ -43,6 +43,20 @@ export function describe(event: JobEvent, previous?: JobEvent): { text: string; 
       return { text: "Job cancelled", tone: "font-semibold text-warn" };
     case "job.requeued":
       return { text: "Worker restarted; job requeued", tone: "text-warn" };
+    case "job.retry_scheduled":
+      return {
+        text: `Provider error; retry ${String(event.attempt ?? 1)} in ${formatDuration(Number(event.delay_s ?? 0))}, resuming at the ${LABELS[String(event.stage)] ?? String(event.stage)}`,
+        tone: "text-warn",
+      };
+    case "job.resumed": {
+      const stages = Array.isArray(event.stages) ? event.stages.length : 0;
+      return {
+        text: `Resumed; ${stages} completed stage${stages === 1 ? "" : "s"} kept`,
+        tone: "text-ink-2",
+      };
+    }
+    case "job.retried":
+      return { text: "Retry requested", tone: "text-warn" };
     default:
       return { text: event.event, tone: "text-ink-2" };
   }
