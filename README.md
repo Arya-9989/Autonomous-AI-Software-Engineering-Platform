@@ -97,6 +97,12 @@ Animated WebP (479 KB), with a shorter GIF for clients that cannot show WebP.</s
   production), Alembic migrations, and a DB-backed queue with atomic claims. Heartbeats, a
   stale-job reaper, cancellation, and graceful requeue on shutdown make it safe to run several
   replicas.
+- **Resumable jobs** ([ADR 0009](docs/adr/0009-resumable-jobs.md)): a stage that fails with a
+  transient provider error (rate limit, overload, timeout, 5xx) requeues the job with exponential
+  backoff, up to `JOB_TRANSIENT_RETRIES` times. The next attempt resumes at that stage, keeping
+  the artifacts of the stages that finished, so they are not paid for twice. A failed job can be
+  retried the same way (`POST /api/v1/jobs/{id}/retry`), and a job requeued by a worker shutdown
+  keeps its finished stages too.
 - **Live progress over SSE**: the persisted event log is replayed, then followed live. Clients resume
   with `Last-Event-ID`.
 - **Outputs**: a downloadable zip (deterministic archive), a file browser, `ARCHITECTURE.md` with a
@@ -344,6 +350,7 @@ All settings are environment variables (a `.env` file is read if present).
 | `SERVE_API` | `true` | `false` on worker-only processes (`autoswe worker` sets it) |
 | `MAX_ACTIVE_JOBS_PER_OWNER` | `3` | Queued and running jobs allowed per API key (`429` beyond) |
 | `MAX_REPAIR_ROUNDS` | `1` | Repair rounds after failed validation (0–3) |
+| `JOB_TRANSIENT_RETRIES` / `JOB_RETRY_DELAY_S` | `2` / `30` | Automatic retries after a transient provider error, resuming at the failed stage; first delay in seconds, doubling with ±20% jitter, capped at 10 minutes |
 | `JOB_STALE_AFTER_S` | `300` | Running jobs without a heartbeat for this long are failed |
 | `MAX_GENERATED_FILES` / `MAX_FILE_BYTES` / `MAX_TOTAL_BYTES` | `200` / `512000` / `5000000` | Output limits |
 | `LOG_FORMAT` / `LOG_LEVEL` | `json` / `INFO` | `console` for human-friendly logs |
@@ -387,6 +394,7 @@ Authenticate with `Authorization: Bearer <key>` or `X-API-Key: <key>`. Interacti
 | `GET` | `/api/v1/jobs/{id}/files/{path}` | One file's content |
 | `GET` | `/api/v1/jobs/{id}/archive` | The generated project as a `.zip` |
 | `POST` | `/api/v1/jobs/{id}/cancel` | Cancel a queued or running job |
+| `POST` | `/api/v1/jobs/{id}/retry` | Requeue a failed job; it resumes at the stage that failed. `202`, `402` (no budget room for its reservation), `409` (not failed), `429` (too many active jobs) |
 | `DELETE` | `/api/v1/jobs/{id}` | Delete a finished job |
 | `POST` | `/api/v1/jobs/{id}/publish` | `{repository, visibility?, description?}`: new GitHub repository plus a pull request; `201`, `409` (name taken or already published), `503` (not configured or rate-limited) |
 | `GET` | `/api/v1/usage` | Your budget for the current period (limit, used, reserved, remaining, reset time) and token and cost totals |
@@ -700,8 +708,8 @@ tests/                          # pytest suite
   the gVisor runtime option has not been run.
 - The eval recordings in the repository come from the offline provider. The harness, `--live` mode
   and the recording tool work with Claude, but no live recording has been made yet.
-- Agent calls are not retried at job level. A transient provider error fails the job, which can
-  then be resubmitted.
+- A job that resumes reruns the interrupted stage from its start: there is no checkpoint inside
+  a stage (e.g. between the coder's repair rounds).
 
 ## Roadmap (future work, not implemented)
 
