@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import and_, delete, func, null, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from autoswe.budget import UsageRepository
@@ -32,6 +33,10 @@ class Reservation:
     period_start: datetime
     amount: int
     limit: int | None
+
+
+class DuplicateSubmissionError(Exception):
+    """A job with this owner's Idempotency-Key already exists."""
 
 
 class BudgetRefusedError(Exception):
@@ -61,12 +66,15 @@ class JobRepository:
         request_id: str | None = None,
         trace_context: dict[str, str] | None = None,
         stack: str = "python",
+        idempotency_key: str | None = None,
+        request_hash: str | None = None,
     ) -> Job:
         """Insert a queued job. With a reservation, the budget compare-and-set runs in the
         same transaction, so a refused reservation leaves no job behind."""
         job = Job(owner=owner, title=title, spec=spec, provider=provider, model=model,
                   request_id=request_id, trace_context=trace_context or None,
-                  stack=stack)  # fmt: skip
+                  stack=stack, idempotency_key=idempotency_key,
+                  request_hash=request_hash)  # fmt: skip
         if reservation is not None:
             usage = UsageRepository(self.session)
             await usage.ensure(owner, reservation.period_start)
@@ -82,10 +90,26 @@ class JobRepository:
             for index, stage in enumerate(STAGE_ORDER)
         ]
         self.session.add(job)
-        await self.session.flush()
+        try:
+            await self.session.flush()
+        except IntegrityError:
+            # Only the (owner, idempotency_key) index can collide: a concurrent submission with
+            # the same key won. Roll back (its reservation too) and let the caller return it.
+            await self.session.rollback()
+            if idempotency_key is None:
+                raise
+            raise DuplicateSubmissionError(owner, idempotency_key) from None
         self.session.add(JobEvent(job_id=job.id, type="job.queued", payload={"provider": provider}))
         await self.session.commit()
         return job
+
+    async def by_idempotency_key(self, owner: str, key: str) -> Job | None:
+        query = (
+            select(Job)
+            .where(Job.owner == owner, Job.idempotency_key == key)
+            .execution_options(populate_existing=True)
+        )
+        return (await self.session.execute(query)).scalar_one_or_none()
 
     async def get(self, job_id: str, owner: str | None = None) -> Job | None:
         # populate_existing: sessions keep objects after commit (expire_on_commit=False), so a

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -42,7 +43,12 @@ from autoswe.publishing import (
     pull_request_body,
     repository_name_problem,
 )
-from autoswe.repository import BudgetRefusedError, JobRepository, Reservation
+from autoswe.repository import (
+    BudgetRefusedError,
+    DuplicateSubmissionError,
+    JobRepository,
+    Reservation,
+)
 from autoswe.schemas import (
     FileContent,
     FileEntry,
@@ -80,10 +86,52 @@ async def _owned_job(repo: JobRepository, job_id: str, owner: str) -> Job:
     return job
 
 
-@router.post("", status_code=status.HTTP_202_ACCEPTED, response_model=JobDetail)
+IdempotencyKey = Annotated[
+    str | None,
+    Header(
+        alias="Idempotency-Key",
+        pattern=r"^[A-Za-z0-9._:-]{1,128}$",
+        description="Retrying a submission with the same key returns the job it created "
+        "instead of creating (and paying for) another. Reusing a key with a different body is "
+        "a 422. A key is held for as long as its job exists.",
+    ),
+]
+
+
+def _request_hash(payload: JobCreate) -> str:
+    body = json.dumps(payload.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(body.encode()).hexdigest()
+
+
+def _replay(job: Job, request_hash: str, response: Response) -> JobDetail:
+    if job.request_hash != request_hash:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Idempotency-Key was already used for a different request",
+        )
+    response.headers["Idempotent-Replayed"] = "true"
+    return JobDetail.from_model(job)
+
+
+@router.post(
+    "",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=JobDetail,
+    responses={422: {"description": "Invalid body, or an Idempotency-Key reused for another"}},
+)
 async def create_job(
-    payload: JobCreate, principal: PrincipalDep, repo: RepositoryDep, services: ServicesDep
+    payload: JobCreate,
+    principal: PrincipalDep,
+    repo: RepositoryDep,
+    services: ServicesDep,
+    response: Response,
+    idempotency_key: IdempotencyKey = None,
 ) -> JobDetail:
+    request_hash = _request_hash(payload) if idempotency_key else None
+    if idempotency_key and request_hash:
+        existing = await repo.by_idempotency_key(principal.name, idempotency_key)
+        if existing is not None:  # a retry: hand back the job, no new job, no new reservation
+            return _replay(existing, request_hash, response)
     try:
         provider = services.registry.get(payload.provider)
     except UnknownProviderError:
@@ -115,7 +163,15 @@ async def create_job(
             request_id=request_id_var.get(),
             trace_context=current_context_carrier(),
             stack=payload.stack.value,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
         )
+    except DuplicateSubmissionError:  # a concurrent retry with the same key got there first
+        assert idempotency_key is not None
+        assert request_hash is not None
+        winner = await repo.by_idempotency_key(principal.name, idempotency_key)
+        assert winner is not None
+        return _replay(winner, request_hash, response)
     except BudgetRefusedError:
         BUDGET_REJECTIONS.labels("submit").inc()
         state = await UsageRepository(repo.session).state(services.budget, principal.name)

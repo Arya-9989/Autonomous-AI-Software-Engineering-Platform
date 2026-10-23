@@ -93,6 +93,8 @@ class Job(Base):
     __table_args__ = (
         Index("ix_jobs_status_created_at", "status", "created_at"),
         Index("ix_jobs_owner_created_at", "owner", "created_at"),
+        # One job per (owner, Idempotency-Key); NULL keys never collide on either backend.
+        Index("uq_jobs_owner_idempotency_key", "owner", "idempotency_key", unique=True),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -133,6 +135,9 @@ class Job(Base):
     # Automatic retries after transient provider failures, and the earliest time a job that was
     # requeued for one may be claimed again (None: as soon as a worker is free).
     retries: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # The submission's Idempotency-Key and a hash of its body: a repeat returns this job.
+    idempotency_key: Mapped[str | None] = mapped_column(String(128))
+    request_hash: Mapped[str | None] = mapped_column(String(64))
     run_after: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
