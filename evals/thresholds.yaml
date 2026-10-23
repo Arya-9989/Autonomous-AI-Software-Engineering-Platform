@@ -15,4 +15,6 @@ metrics:
   design_coverage: 1.0
   entity_recall: 0.95
   field_recall: 1.0
+  # 0.889 measured: clinic finds Pet -> Owner but not Appointment or Vet, so not their links.
+  relation_recall: 0.88
   review_score: 1.0

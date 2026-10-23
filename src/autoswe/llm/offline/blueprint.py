@@ -136,10 +136,12 @@ def _design_python(requirements: Requirements, endpoints: list[Endpoint]) -> Arc
                 alternatives=["Microservice per entity", "Serverless functions"],
             ),
             DecisionRecord(
-                title="Create schema on startup",
-                decision="Call metadata.create_all() at startup instead of migrations.",
-                rationale="Keeps the scaffold minimal; adopt Alembic before schemas evolve.",
-                alternatives=["Alembic migrations from day one"],
+                title="Alembic migrations own the schema",
+                decision="Ship an initial Alembic revision and run `alembic upgrade head` before "
+                "the server starts; the app never calls metadata.create_all().",
+                rationale="Schema changes become reviewed, reversible scripts, and the tests "
+                "build their database through the same migrations they ship.",
+                alternatives=["metadata.create_all() at startup", "Hand-written SQL scripts"],
             ),
         ],
     )

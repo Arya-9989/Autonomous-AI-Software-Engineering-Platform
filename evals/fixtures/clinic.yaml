@@ -7,6 +7,10 @@ spec: >-
 expected:
   entities: [Owner, Pet, Appointment, Vet]
   spurious_entities: [Book]
+  relations:
+    - Pet -> Owner
+    - Appointment -> Pet
+    - Appointment -> Vet
   endpoints:
     - GET /owners
     - POST /pets

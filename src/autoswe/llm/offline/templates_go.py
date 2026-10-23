@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from textwrap import dedent
 
+from autoswe.pipeline import relations
 from autoswe.pipeline.artifacts import ArchitectureSpec, Entity, EntityField, GeneratedFile
 from autoswe.pipeline.naming import kebab, pascal, pluralize, snake
 
@@ -179,7 +180,9 @@ def render_validation() -> str:
 
 
 def render_store() -> str:
-    store = _aligned([("mu", "sync.Mutex"), ("items", "map[int64]Item"), ("next", "int64")])
+    store = _aligned([("mu", "sync.Mutex"), ("items", "map[int64]Item"), ("next", "int64"),
+                      ("dependents", "[]dependent")])  # fmt: skip
+    dependent = _aligned([("key", "string"), ("store", "*Store")])
     return (
         _src("""
         package main
@@ -197,6 +200,8 @@ def render_store() -> str:
         type Store struct {
         """)
         + "\n".join(store)
+        + "\n}\n\n// dependent is a store whose items point at this one's through key.\ntype dependent struct {\n"
+        + "\n".join(dependent)
         + "\n}\n\n"
         + _src("""
         // NewStore returns an empty store.
@@ -204,8 +209,30 @@ def render_store() -> str:
         \treturn &Store{items: make(map[int64]Item), next: 1}
         }
 
-        // List returns up to limit items, oldest first, after skipping offset.
-        func (s *Store) List(limit, offset int) []Item {
+        // CascadeTo makes deleting an item here delete the child items whose key holds its id.
+        func (s *Store) CascadeTo(key string, child *Store) {
+        \ts.mu.Lock()
+        \tdefer s.mu.Unlock()
+        \ts.dependents = append(s.dependents, dependent{key: key, store: child})
+        }
+
+        // refersTo reports whether a decoded JSON value is the given id.
+        func refersTo(value any, id int64) bool {
+        \tnumber, ok := value.(float64)
+        \treturn ok && number == float64(id)
+        }
+
+        func matches(item Item, where map[string]int64) bool {
+        \tfor key, id := range where {
+        \t\tif !refersTo(item[key], id) {
+        \t\t\treturn false
+        \t\t}
+        \t}
+        \treturn true
+        }
+
+        // List returns up to limit items whose where keys match, oldest first, after skipping offset.
+        func (s *Store) List(limit, offset int, where map[string]int64) []Item {
         \ts.mu.Lock()
         \tdefer s.mu.Unlock()
         \tids := make([]int64, 0, len(s.items))
@@ -214,8 +241,18 @@ def render_store() -> str:
         \t}
         \tsort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
         \tpage := make([]Item, 0, limit)
-        \tfor i := offset; i < len(ids) && len(page) < limit; i++ {
-        \t\tpage = append(page, s.items[ids[i]])
+        \tskipped := 0
+        \tfor _, id := range ids {
+        \t\titem := s.items[id]
+        \t\tswitch {
+        \t\tcase len(page) == limit:
+        \t\t\treturn page
+        \t\tcase !matches(item, where):
+        \t\tcase skipped < offset:
+        \t\t\tskipped++
+        \t\tdefault:
+        \t\t\tpage = append(page, item)
+        \t\t}
         \t}
         \treturn page
         }
@@ -260,16 +297,42 @@ def render_store() -> str:
         \treturn updated, true
         }
 
-        // Delete removes an item and reports whether it existed.
+        // Delete removes an item, and the items that belong to it, and reports whether it existed.
         func (s *Store) Delete(id int64) bool {
         \ts.mu.Lock()
-        \tdefer s.mu.Unlock()
         \t_, ok := s.items[id]
         \tdelete(s.items, id)
+        \tdependents := s.dependents
+        \ts.mu.Unlock() // not held while the children go: each store locks only itself
+        \tif ok {
+        \t\tfor _, child := range dependents {
+        \t\t\tchild.store.deleteWhere(child.key, id)
+        \t\t}
+        \t}
         \treturn ok
+        }
+
+        // deleteWhere deletes every item whose key refers to id (and, in turn, their children).
+        func (s *Store) deleteWhere(key string, id int64) {
+        \ts.mu.Lock()
+        \tvar doomed []int64
+        \tfor itemID, item := range s.items {
+        \t\tif refersTo(item[key], id) {
+        \t\t\tdoomed = append(doomed, itemID)
+        \t\t}
+        \t}
+        \ts.mu.Unlock()
+        \tfor _, itemID := range doomed {
+        \t\ts.Delete(itemID)
+        \t}
         }
         """)
     )
+
+
+def _references(entity: Entity) -> list[tuple[str, str]]:
+    """(parent, foreign key) pairs; ``entity.belongs_to`` is already normalised."""
+    return [(parent, relations.foreign_key(parent)) for parent in entity.belongs_to]
 
 
 def render_models(entities: list[Entity]) -> str:
@@ -280,6 +343,7 @@ def render_models(entities: list[Entity]) -> str:
             go_type = _GO_TYPES[field.type]
             rows.append((_go_name(field.name), go_type if field.required else f"*{go_type}",
                          f'`json:"{field.name}"`'))  # fmt: skip
+        rows += [(_go_name(key), "int64", f'`json:"{key}"`') for _, key in _references(entity)]
         rows.append(("CreatedAt", "string", '`json:"created_at"`'))
         if index:
             lines.append("")
@@ -296,26 +360,35 @@ def render_models(entities: list[Entity]) -> str:
             lines.append(
                 f'\t{{Name: "{field.name}", Type: {_FIELD_TYPES[field.type]}, Required: {required}}},'
             )
+        lines += [
+            f'\t{{Name: "{key}", Type: TypeInteger, Required: true}},'
+            for _, key in _references(entity)
+        ]
         lines.append("}")
     return "\n".join(lines) + "\n"
 
 
 def render_handlers(entities: list[Entity]) -> str:
     routes = []
-    for entity in entities:
+    for entity in relations.creation_order(entities):  # parents' stores exist before children's
         var = _lower(pluralize(entity.name))
         base = "/" + kebab(pluralize(entity.name))
+        refs = "".join(
+            f', reference{{key: "{key}", label: "{parent}", store: {_lower(pluralize(parent))}.store}}'
+            for parent, key in _references(entity)
+        )
         routes += [
             "",
-            f'\t{var} := &resource{{label: "{entity.name}", fields: {_lower(entity.name)}Fields, '
-            "store: NewStore()}",
+            f'\t{var} := newResource("{entity.name}", {_lower(entity.name)}Fields{refs})',
             f'\tmux.HandleFunc("GET {base}", {var}.list)',
             f'\tmux.HandleFunc("POST {base}", {var}.create)',
             f'\tmux.HandleFunc("GET {base}/{{id}}", {var}.get)',
             f'\tmux.HandleFunc("PATCH {base}/{{id}}", {var}.update)',
             f'\tmux.HandleFunc("DELETE {base}/{{id}}", {var}.delete)',
         ]
-    resource = _aligned([("label", "string"), ("fields", "[]FieldSpec"), ("store", "*Store")])
+    resource = _aligned([("label", "string"), ("fields", "[]FieldSpec"), ("store", "*Store"),
+                         ("references", "[]reference")])  # fmt: skip
+    reference = _aligned([("key", "string"), ("label", "string"), ("store", "*Store")])
     return (
         _src("""
         package main
@@ -323,6 +396,7 @@ def render_handlers(entities: list[Entity]) -> str:
         import (
         \t"encoding/json"
         \t"errors"
+        \t"fmt"
         \t"net/http"
         \t"strconv"
         )
@@ -332,7 +406,21 @@ def render_handlers(entities: list[Entity]) -> str:
         type resource struct {
         """)
         + "\n".join(resource)
+        + "\n}\n\n// reference is a many-to-one link: key holds the id of an item in the parent's store.\n"
+        + "type reference struct {\n"
+        + "\n".join(reference)
         + "\n}\n\n"
+        + _src("""
+        // newResource builds one entity's handlers; deleting a parent deletes what references it.
+        func newResource(label string, fields []FieldSpec, references ...reference) *resource {
+        \tres := &resource{label: label, fields: fields, store: NewStore(), references: references}
+        \tfor _, ref := range references {
+        \t\tref.store.CascadeTo(ref.key, res.store)
+        \t}
+        \treturn res
+        }
+
+        """)
         + _src("""
         // newServer wires every route: CRUD for each entity, plus GET /healthz.
         func newServer() http.Handler {
@@ -394,7 +482,34 @@ def render_handlers(entities: list[Entity]) -> str:
         \t\tdetail(w, http.StatusUnprocessableEntity, []string{"limit or offset out of range"})
         \t\treturn
         \t}
-        \twriteJSON(w, http.StatusOK, res.store.List(limit, offset))
+        \twhere := make(map[string]int64, len(res.references))
+        \tfor _, ref := range res.references {
+        \t\traw := r.URL.Query().Get(ref.key)
+        \t\tif raw == "" {
+        \t\t\tcontinue
+        \t\t}
+        \t\tid, err := strconv.ParseInt(raw, 10, 64)
+        \t\tif err != nil || id < 1 {
+        \t\t\tdetail(w, http.StatusUnprocessableEntity, []string{ref.key + ": expected a positive integer"})
+        \t\t\treturn
+        \t\t}
+        \t\twhere[ref.key] = id
+        \t}
+        \twriteJSON(w, http.StatusOK, res.store.List(limit, offset, where))
+        }
+
+        // missingParent names the first referenced parent that does not exist.
+        func (res *resource) missingParent(data map[string]any) (string, bool) {
+        \tfor _, ref := range res.references {
+        \t\tnumber, ok := data[ref.key].(float64)
+        \t\tif !ok {
+        \t\t\tcontinue
+        \t\t}
+        \t\tif _, found := ref.store.Get(int64(number)); !found {
+        \t\t\treturn fmt.Sprintf("%s %d not found", ref.label, int64(number)), true
+        \t\t}
+        \t}
+        \treturn "", false
         }
 
         func (res *resource) create(w http.ResponseWriter, r *http.Request) {
@@ -405,6 +520,10 @@ def render_handlers(entities: list[Entity]) -> str:
         \tdata, problems := validate(res.fields, body, false)
         \tif len(problems) > 0 {
         \t\tdetail(w, http.StatusUnprocessableEntity, problems)
+        \t\treturn
+        \t}
+        \tif message, missing := res.missingParent(data); missing {
+        \t\tdetail(w, http.StatusUnprocessableEntity, message)
         \t\treturn
         \t}
         \twriteJSON(w, http.StatusCreated, res.store.Create(data))
@@ -435,6 +554,14 @@ def render_handlers(entities: list[Entity]) -> str:
         \tdata, problems := validate(res.fields, body, true)
         \tif len(problems) > 0 {
         \t\tdetail(w, http.StatusUnprocessableEntity, problems)
+        \t\treturn
+        \t}
+        \tif _, found := res.store.Get(id); !found {
+        \t\tdetail(w, http.StatusNotFound, res.label+" not found")
+        \t\treturn
+        \t}
+        \tif message, missing := res.missingParent(data); missing {
+        \t\tdetail(w, http.StatusUnprocessableEntity, message)
         \t\treturn
         \t}
         \titem, found := res.store.Update(id, data)
@@ -578,10 +705,14 @@ def render_test_helpers() -> str:
     """)
 
 
-def render_entity_test(entity: Entity) -> str:
+def render_entity_test(entity: Entity, entities: list[Entity] | None = None) -> str:
+    entities = entities or [entity]
     name = entity.name
     base = "/" + kebab(pluralize(name))
     payload = _lower(name) + "Payload"
+    has_children = bool(relations.children_of(name, entities))
+    # A child posts a body with freshly created parents; ``payload`` stays the plain sample.
+    body = f"{_lower(name)}Body(t, server)" if entity.belongs_to else payload
     target = next((f for f in entity.fields if f.type in {"string", "text"}), entity.fields[0])
     new_value = _sample(target, updated=True)
     # JSON numbers decode to float64: compare against one, not an untyped int constant.
@@ -592,6 +723,7 @@ def render_entity_test(entity: Entity) -> str:
         "",
         "import (",
         '\t"fmt"',
+        *(['\t"maps"'] if entity.belongs_to else []),
         '\t"net/http"',
         '\t"net/http/httptest"',
         '\t"testing"',
@@ -601,11 +733,35 @@ def render_entity_test(entity: Entity) -> str:
         *pairs,
         "}",
         "",
+    ]
+    if entity.belongs_to:
+        lines += [
+            f"// {_lower(name)}Body is {payload} pointing at parents created for the test.",
+            f"func {_lower(name)}Body(t *testing.T, server *httptest.Server) map[string]any {{",
+            "\tt.Helper()",
+            f"\tbody := maps.Clone({payload})",
+            *[f'\tbody["{key}"] = make{parent}(t, server)' for parent, key in _references(entity)],
+            "\treturn body",
+            "}",
+            "",
+        ]
+    if has_children:
+        lines += [
+            f"// make{name} creates a {name.lower()} and returns its id, for tests of what belongs to it.",
+            f"func make{name}(t *testing.T, server *httptest.Server) float64 {{",
+            "\tt.Helper()",
+            f'\tcreated := decode[map[string]any](t, call(t, server, http.MethodPost, "{base}", {body}), http.StatusCreated)',
+            '\treturn created["id"].(float64)',
+            "}",
+            "",
+        ]
+    lines += [
         f"func Test{name}CreateAndGet(t *testing.T) {{",
         "\tserver := httptest.NewServer(newServer())",
         "\tdefer server.Close()",
-        f'\tcreated := decode[map[string]any](t, call(t, server, http.MethodPost, "{base}", {payload}), http.StatusCreated)',
-        f"\tfor key, want := range normalize(t, {payload}) {{",
+        *([f"\tsent := {body}"] if entity.belongs_to else []),
+        f'\tcreated := decode[map[string]any](t, call(t, server, http.MethodPost, "{base}", {"sent" if entity.belongs_to else payload}), http.StatusCreated)',
+        f"\tfor key, want := range normalize(t, {'sent' if entity.belongs_to else payload}) {{",
         "\t\tif created[key] != want {",
         '\t\t\tt.Errorf("%s = %v, want %v", key, created[key], want)',
         "\t\t}",
@@ -620,7 +776,7 @@ def render_entity_test(entity: Entity) -> str:
         "\tserver := httptest.NewServer(newServer())",
         "\tdefer server.Close()",
         "\tfor range 3 {",
-        f'\t\texpect(t, call(t, server, http.MethodPost, "{base}", {payload}), http.StatusCreated)',
+        f'\t\texpect(t, call(t, server, http.MethodPost, "{base}", {body}), http.StatusCreated)',
         "\t}",
         f'\tpage := decode[[]map[string]any](t, call(t, server, http.MethodGet, "{base}?limit=2&offset=1", nil), http.StatusOK)',
         "\tif len(page) != 2 {",
@@ -632,7 +788,7 @@ def render_entity_test(entity: Entity) -> str:
         f"func Test{name}Update(t *testing.T) {{",
         "\tserver := httptest.NewServer(newServer())",
         "\tdefer server.Close()",
-        f'\tcreated := decode[map[string]any](t, call(t, server, http.MethodPost, "{base}", {payload}), http.StatusCreated)',
+        f'\tcreated := decode[map[string]any](t, call(t, server, http.MethodPost, "{base}", {body}), http.StatusCreated)',
         f'\tpath := fmt.Sprintf("{base}/%v", created["id"])',
         f'\tupdated := decode[map[string]any](t, call(t, server, http.MethodPatch, path, map[string]any{{"{target.name}": {_sample(target, updated=True)}}}), http.StatusOK)',
         f'\tif updated["{target.name}"] != {expected} {{',
@@ -643,7 +799,7 @@ def render_entity_test(entity: Entity) -> str:
         f"func Test{name}Delete(t *testing.T) {{",
         "\tserver := httptest.NewServer(newServer())",
         "\tdefer server.Close()",
-        f'\tcreated := decode[map[string]any](t, call(t, server, http.MethodPost, "{base}", {payload}), http.StatusCreated)',
+        f'\tcreated := decode[map[string]any](t, call(t, server, http.MethodPost, "{base}", {body}), http.StatusCreated)',
         f'\tpath := fmt.Sprintf("{base}/%v", created["id"])',
         "\texpect(t, call(t, server, http.MethodDelete, path, nil), http.StatusNoContent)",
         "\texpect(t, call(t, server, http.MethodGet, path, nil), http.StatusNotFound)",
@@ -661,12 +817,49 @@ def render_entity_test(entity: Entity) -> str:
         "\tdefer server.Close()",
         f'\texpect(t, call(t, server, http.MethodPost, "{base}", map[string]any{{"unknown_field": 1}}), http.StatusUnprocessableEntity)',
     ]
-    if any(f.required for f in entity.fields):
+    if any(f.required for f in entity.fields) or entity.belongs_to:
         lines.append(
             f'\texpect(t, call(t, server, http.MethodPost, "{base}", map[string]any{{}}), '
             "http.StatusUnprocessableEntity)"
         )
     lines.append("}")
+    if entity.belongs_to:
+        parent, key = _references(entity)[0]
+        parent_base = "/" + kebab(pluralize(parent))
+        lines += [
+            "",
+            f"func Test{name}RequiresAnExisting{parent}(t *testing.T) {{",
+            "\tserver := httptest.NewServer(newServer())",
+            "\tdefer server.Close()",
+            f"\tsent := {body}",
+            f'\tsent["{key}"] = 999999',
+            f'\tgot := decode[map[string]any](t, call(t, server, http.MethodPost, "{base}", sent), http.StatusUnprocessableEntity)',
+            f'\tif got["detail"] != "{parent} 999999 not found" {{',
+            '\t\tt.Fatalf("detail = %v", got["detail"])',
+            "\t}",
+            "}",
+            "",
+            f"func Test{name}FiltersBy{parent}(t *testing.T) {{",
+            "\tserver := httptest.NewServer(newServer())",
+            "\tdefer server.Close()",
+            f"\tmine := {body}",
+            f'\texpect(t, call(t, server, http.MethodPost, "{base}", mine), http.StatusCreated)',
+            f'\texpect(t, call(t, server, http.MethodPost, "{base}", {body}), http.StatusCreated)',
+            f'\tpage := decode[[]map[string]any](t, call(t, server, http.MethodGet, fmt.Sprintf("{base}?{key}=%v", mine["{key}"]), nil), http.StatusOK)',
+            f'\tif len(page) != 1 || page[0]["{key}"] != mine["{key}"] {{',
+            '\t\tt.Fatalf("page = %v", page)',
+            "\t}",
+            f'\texpect(t, call(t, server, http.MethodGet, "{base}?{key}=0", nil), http.StatusUnprocessableEntity)',
+            "}",
+            "",
+            f"func Test{name}IsDeletedWithIts{parent}(t *testing.T) {{",
+            "\tserver := httptest.NewServer(newServer())",
+            "\tdefer server.Close()",
+            f'\tcreated := decode[map[string]any](t, call(t, server, http.MethodPost, "{base}", {body}), http.StatusCreated)',
+            f'\texpect(t, call(t, server, http.MethodDelete, fmt.Sprintf("{parent_base}/%v", created["{key}"]), nil), http.StatusNoContent)',
+            f'\texpect(t, call(t, server, http.MethodGet, fmt.Sprintf("{base}/%v", created["id"]), nil), http.StatusNotFound)',
+            "}",
+        ]
     return "\n".join(lines) + "\n"
 
 
@@ -682,7 +875,9 @@ def render_readme(name: str, summary: str, architecture: ArchitectureSpec) -> st
         > Review the code before deploying it anywhere that matters.
 
         Go {GO_VERSION} with the standard library only. Data is kept in memory, so run one
-        replica until a database replaces `store.go`.
+        replica until a database replaces `store.go`. A record that belongs to another (a
+        `<parent>_id` field) must point at one that exists, lists can be filtered by it, and
+        deleting the parent deletes its children.
 
         ## Run and test
 
@@ -704,7 +899,7 @@ def render_readme(name: str, summary: str, architecture: ArchitectureSpec) -> st
 def render_project(
     project: str, summary: str, architecture: ArchitectureSpec
 ) -> list[GeneratedFile]:
-    entities = architecture.entities
+    entities = relations.normalise(architecture.entities)
     files = [
         GeneratedFile(path="go.mod", content=render_go_mod(project),
                       description="Module definition (no dependencies)"),
@@ -727,7 +922,7 @@ def render_project(
         files.append(
             GeneratedFile(
                 path=f"{snake(pluralize(entity.name))}_test.go",
-                content=render_entity_test(entity),
+                content=render_entity_test(entity, entities),
                 description=f"API tests for {pluralize(entity.name).lower()}",
             )
         )

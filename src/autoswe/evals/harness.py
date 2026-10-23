@@ -183,8 +183,24 @@ _COLUMNS = (
     ("completed", "done"), ("validation_passed", "valid"), ("tests_passed", "tests"),
     ("lint_clean", "lint"), ("typecheck_clean", "types"), ("endpoint_recall", "endpoints"),
     ("design_coverage", "design"), ("entity_recall", "entities"), ("field_recall", "fields"),
+    ("relation_recall", "relations"),
     ("no_spurious_entities", "no spurious"), ("review_score", "review"),
 )  # fmt: skip
+
+
+def _findings(result: FixtureResult) -> list[str]:
+    details = [f"error: {result.error}"] if result.error else []
+    for label, names in (
+        ("missing entities", result.missing_entities),
+        ("missing relations", result.missing_relations),
+        ("spurious entities", result.spurious_entities),
+        ("missing endpoints", result.missing_endpoints),
+    ):
+        if names:
+            details.append(f"{label}: {', '.join(names)}")
+    if result.test_repair_rounds:
+        details.append(f"test repair rounds: {result.test_repair_rounds}")
+    return details
 
 
 def report_markdown(run: SuiteRun, thresholds: Thresholds, failures: list[str]) -> str:
@@ -231,23 +247,15 @@ def report_markdown(run: SuiteRun, thresholds: Thresholds, failures: list[str]) 
     lines.append("| --- " * (len(_COLUMNS) + 2) + "|")
     for result in run.results:
         cells = [_fmt(result.metrics.get(name)) for name, _ in _COLUMNS]
-        tests = f"{result.tests_passed}/{result.tests_collected}" if result.test_status else "n/a"
+        ran = result.tests_collected - result.tests_skipped
+        skipped = f" ({result.tests_skipped} skipped)" if result.tests_skipped else ""
+        tests = f"{result.tests_passed}/{ran}{skipped}" if result.test_status else "n/a"
         lines.append(f"| `{result.name}` | " + " | ".join(cells) + f" | {tests} |")
-    notes = []
-    for result in run.results:
-        details = []
-        if result.error:
-            details.append(f"error: {result.error}")
-        if result.missing_entities:
-            details.append(f"missing entities: {', '.join(result.missing_entities)}")
-        if result.spurious_entities:
-            details.append(f"spurious entities: {', '.join(result.spurious_entities)}")
-        if result.missing_endpoints:
-            details.append(f"missing endpoints: {', '.join(result.missing_endpoints)}")
-        if result.test_repair_rounds:
-            details.append(f"test repair rounds: {result.test_repair_rounds}")
-        if details:
-            notes.append(f"- `{result.name}`: " + "; ".join(details))
+    notes = [
+        f"- `{result.name}`: " + "; ".join(details)
+        for result in run.results
+        if (details := _findings(result))
+    ]
     if notes:
         lines += ["", "## Findings", "", *notes]
     if failures:

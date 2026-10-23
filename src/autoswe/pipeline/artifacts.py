@@ -35,6 +35,11 @@ class Entity(_Model):
     name: str = Field(description="PascalCase singular entity name, e.g. 'Book'")
     description: str
     fields: list[EntityField]
+    belongs_to: list[str] = Field(
+        default_factory=list,
+        description="Entities this one references (many-to-one), e.g. a Loan belongs to "
+        "['Member', 'Book']; each becomes a required <entity>_id foreign key",
+    )
 
 
 class Requirements(_Model):

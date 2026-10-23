@@ -253,7 +253,10 @@ async def test_jobs_api_exposes_the_test_report(harness_factory: HarnessFactory)
     assert detail["status"] == "succeeded", detail.get("error")
     assert detail["tests"]["status"] == "passed"
     assert detail["tests"]["backend"] == "local"
-    assert detail["tests"]["passed"] == detail["tests"]["collected"] > 0
+    tests = detail["tests"]
+    # The generated PostgreSQL migration check skips without TEST_DATABASE_URL; nothing fails.
+    assert tests["passed"] == tests["collected"] - tests["skipped"] > 0
+    assert tests["skipped"] == 1 and tests["failed"] == 0
     assert detail["tests"]["attempts"] == 1
 
     report = (await harness.client.get(f"/api/v1/jobs/{job['id']}/tests", headers=ALICE)).json()

@@ -138,6 +138,7 @@ class TestsSummary(BaseModel):
     passed: int
     failed: int
     errors: int
+    skipped: int = Field(default=0, description="Collected but not run; neither pass nor fail")
     attempts: int
     repair_budget_exhausted: bool
 
@@ -152,6 +153,7 @@ class TestsSummary(BaseModel):
             passed=int(tests.get("passed", 0)),
             failed=int(tests.get("failed", 0)),
             errors=int(tests.get("errors", 0)),
+            skipped=int(tests.get("skipped", 0)),
             attempts=len(report.get("attempts") or []),
             repair_budget_exhausted=bool(report.get("repair_budget_exhausted")),
         )

@@ -24,9 +24,18 @@ Target stack for generated projects (do not deviate unless the spec explicitly r
 - SQLite by default via DATABASE_URL, PostgreSQL in production
 - pytest + FastAPI TestClient for tests, ruff for linting
 - The service exposes GET /healthz returning {"status": "ok"}
+- Alembic owns the database schema; the application never creates tables itself
 - Generated tests run in an offline sandbox where only these packages are installed: \
-fastapi, pydantic, sqlalchemy, httpx2, pytest, ruff and mypy. Tests must not need the \
+fastapi, pydantic, sqlalchemy, alembic, httpx2, pytest, ruff and mypy. Tests must not need the \
 network.
+"""
+
+# Shared by every stack's coder: what a many-to-one link (Entity.belongs_to) means in code.
+RELATIONS = """\
+- For each parent in an entity's `belongs_to`, the entity gets a required integer \
+`<parent>_id` (e.g. member_id). Creating or updating with an id that does not exist is a 422 \
+with detail "<Parent> <id> not found"; the list endpoint filters by it (?member_id=3); \
+deleting the parent deletes its children (cascade). Test all three for every link.
 """
 
 ANALYST = (
@@ -34,7 +43,9 @@ ANALYST = (
     + """
 Role: requirements analyst.
 Turn the specification into precise, testable requirements. Identify the domain entities and \
-their fields (snake_case names, simple scalar types). Keep the scope to what the spec asks \
+their fields (snake_case names, simple scalar types). When an entity refers to another (a \
+loan is of a book, by a member), name the parents in `belongs_to` instead of adding id fields. \
+Keep the scope to what the spec asks \
 for; record anything you had to assume in `assumptions` and anything you deliberately left out \
 in `out_of_scope`. Prefer 1-6 entities. `project_name` must be short kebab-case.
 """
@@ -57,13 +68,25 @@ CODER = (
     + """
 Role: senior Python engineer.
 Implement the architecture as a complete repository. Required files:
-- pyproject.toml (PEP 621, hatchling build backend, packages = ["app"], dev group with pytest, \
-httpx and ruff; [tool.pytest.ini_options] pythonpath = ["."])
+- pyproject.toml (PEP 621, hatchling build backend, packages = ["app"], alembic among the \
+dependencies, dev group with pytest, httpx and ruff; [tool.pytest.ini_options] pythonpath = \
+["."])
 - README.md
-- app/__init__.py, app/main.py (FastAPI app; create tables in a lifespan handler), app/db.py, \
-app/models.py, app/schemas.py, one module per entity under app/routers/
-- tests/conftest.py and tests/test_<entity>.py covering create, read, list, update, delete, \
-404 and validation errors; tests must use an isolated SQLite database
+- app/__init__.py, app/main.py (FastAPI app; it never creates tables), app/db.py (enable \
+SQLite foreign keys with PRAGMA foreign_keys=ON), app/models.py (ForeignKey with \
+ondelete="CASCADE" and an index for every link), app/schemas.py (a PATCH may omit any field \
+but must not set a NOT NULL column to null), one module per entity under app/routers/
+- alembic.ini, migrations/env.py (target_metadata from app.models, URL from \
+app.db.DATABASE_URL, render_as_batch on SQLite), migrations/script.py.mako and \
+migrations/versions/0001_initial.py creating every table, parents first, with its foreign \
+keys and indexes, and a downgrade that drops them children first
+- tests/conftest.py (an isolated SQLite database built with `alembic upgrade head`), \
+tests/test_<entity>.py covering create, read, list, update, delete, 404 and validation errors, \
+and tests/test_migrations.py checking that the migrations upgrade, match the models \
+(alembic.autogenerate.compare_metadata finds no drift) and downgrade to base
+"""
+    + RELATIONS
+    + """\
 Do not produce Dockerfiles, CI workflows, Kubernetes or Terraform files; another agent owns \
 them. Code must be complete (no placeholders or TODOs), type-annotated, and pass `ruff check` \
 and `pytest`. Use POSIX relative paths only.
@@ -97,12 +120,15 @@ DEVOPS = (
     + """
 Role: DevOps engineer.
 Produce delivery artifacts for the repository whose file list you are given:
-- Dockerfile: multi-stage, python:3.12-slim base, installs the project with pip, runs as a \
-non-root numeric UID, EXPOSE the container port, HEALTHCHECK against /healthz, uvicorn \
-app.main:app as CMD
+- Dockerfile: multi-stage, python:3.12-slim base, installs the project with pip, copies \
+alembic.ini and migrations/, runs as a non-root numeric UID, EXPOSE the container port, \
+HEALTHCHECK against /healthz, and a CMD that runs `alembic upgrade head` and then execs uvicorn \
+app.main:app
 - .dockerignore
 - .github/workflows/ci.yml: on push/pull_request; job running ruff check and pytest on \
-Python 3.12; second job building the image with docker/build-push-action (push: false). Pin \
+Python 3.12 with a postgres:17 service and TEST_DATABASE_URL pointing at it (the migration \
+test also runs on PostgreSQL); second job building the image with docker/build-push-action \
+(push: false). Pin \
 every action to a major version tag (e.g. actions/checkout@v7). Set least-privilege \
 `permissions`.
 - deploy/k8s/: deployment.yaml (probes, resource requests/limits, runAsNonRoot, \
@@ -177,6 +203,9 @@ eslint.config.js (typescript-eslint recommended), README.md
 request handler), src/ modules for models, validation and the store
 - test/<entity>.test.ts covering create, read, list with limit/offset, update, delete, 404 and \
 validation errors (422), each file starting its own server on an ephemeral port
+"""
+    + RELATIONS
+    + """\
 Do not produce Dockerfiles, CI workflows, Kubernetes or Terraform files; another agent owns \
 them. Code must be complete (no placeholders or TODOs) and pass eslint, tsc and node --test. \
 Use POSIX relative paths only and never include node_modules.
@@ -190,6 +219,9 @@ Implement the architecture as a complete repository. Required files:
 mux.HandleFunc("METHOD /path", ...) literal patterns, models.go, validation.go, store.go
 - <entity>_test.go files using httptest covering create, read, list with limit/offset, \
 update, delete, 404 and validation errors (422)
+"""
+    + RELATIONS
+    + """\
 Do not produce Dockerfiles, CI workflows, Kubernetes or Terraform files; another agent owns \
 them. Code must be complete (no placeholders or TODOs), gofmt-formatted, and pass go vet and \
 go test. Use POSIX relative paths only, in package main at the repository root.

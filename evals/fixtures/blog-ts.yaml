@@ -3,7 +3,7 @@ stack: typescript
 description: 'The blog fixture on TypeScript on Node.js 24: text, boolean and optional datetime fields
   across two entities.'
 spec: 'A blogging backend. Entities: Post(title, body:text, published:bool, published_at?:datetime),
-  Comment(author, body:text, approved:bool)'
+  Comment(post:Post, author, body:text, approved:bool)'
 expected:
   entities:
   - Post
@@ -18,6 +18,8 @@ expected:
     - author
     - body
     - approved
+  relations:
+  - Comment -> Post
   endpoints:
   - GET /posts
   - POST /posts

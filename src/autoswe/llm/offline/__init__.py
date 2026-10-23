@@ -50,17 +50,20 @@ def _review(context: dict[str, Any]) -> ReviewReport:
         )
         for issue in validation.issues
     ]  # fmt: skip
-    if context.get("stack", Stack.PYTHON) == Stack.PYTHON:
+    linked = [e for e in requirements.entities if e.belongs_to]
+    if linked:
+        pairs = ", ".join(f"{p} -> {e.name}" for e in linked for p in e.belongs_to)
         findings.append(
             ReviewFinding(
                 severity="info",
-                file="app/main.py",
-                message="Tables are created with metadata.create_all() at startup.",
-                suggestion="Introduce Alembic migrations before the first schema change in "
-                "production.",
+                file=None,
+                message=f"Deleting a parent deletes its children ({pairs}): the foreign keys "
+                "cascade.",
+                suggestion="Switch a relation to RESTRICT (or a soft delete) where its children "
+                "must outlive the parent, such as records kept for audit.",
             )
         )
-    else:
+    if context.get("stack", Stack.PYTHON) != Stack.PYTHON:
         findings.append(
             ReviewFinding(
                 severity="info",

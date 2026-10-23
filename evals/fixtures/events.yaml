@@ -3,6 +3,10 @@ description: Four actors and objects in prose; ticket sales imply an Event and a
 spec: An events platform where organizers publish events and attendees buy tickets.
 expected:
   entities: [Organizer, Event, Attendee, Ticket]
+  relations:
+    - Event -> Organizer
+    - Ticket -> Event
+    - Ticket -> Attendee
   endpoints:
     - GET /events
     - POST /events

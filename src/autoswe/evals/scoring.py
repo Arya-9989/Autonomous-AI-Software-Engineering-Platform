@@ -17,19 +17,22 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from autoswe.evals.fixtures import EvalFixture
 from autoswe.evals.routes import implemented_endpoints_for, normalize_endpoint, parse_endpoint
 from autoswe.pipeline.agents import PipelineState
+from autoswe.pipeline.relations import foreign_key
 from autoswe.sandbox.models import CheckResult, SandboxStatus
 
 METRICS: dict[str, str] = {
     "completed": "The pipeline finished without a provider or replay error",
     "validation_passed": "Structural validation found no errors",
     "tests_passed": "Every generated test passed in the sandbox (and at least min_tests ran)",
-    "test_pass_rate": "Passed / collected tests in the sandbox",
+    "test_pass_rate": "Passed / run tests in the sandbox (a skipped test did not run)",
     "lint_clean": "The stack's linter passed in the sandbox (ruff, ESLint, gofmt)",
     "typecheck_clean": "The stack's type checker passed in the sandbox (mypy, tsc, go vet)",
     "endpoint_recall": "Expected endpoints from the spec that the code actually serves",
     "design_coverage": "Endpoints in the architecture that the code actually serves",
     "entity_recall": "Expected entities present in the requirements",
     "field_recall": "Expected entity fields present in the requirements",
+    "relation_recall": "Expected many-to-one links in the requirements and, as a <parent>_id "
+    "column, in the code",
     "no_spurious_entities": "No entity the spec rules out was invented",
     "review_score": "The reviewer's score / 100",
 }
@@ -43,6 +46,7 @@ class FixtureResult(BaseModel):
     test_status: str | None = None
     tests_collected: int = 0
     tests_passed: int = 0
+    tests_skipped: int = 0
     test_repair_rounds: int = 0
     files: int = 0
     model_calls: int = 0
@@ -54,6 +58,7 @@ class FixtureResult(BaseModel):
     duration_s: float = 0.0
     missing_endpoints: list[str] = Field(default_factory=list)
     missing_entities: list[str] = Field(default_factory=list)
+    missing_relations: list[str] = Field(default_factory=list)
     spurious_entities: list[str] = Field(default_factory=list)
 
 
@@ -87,6 +92,25 @@ def _entity_metrics(
     return metrics, missing, spurious
 
 
+def _relation_metric(
+    fixture: EvalFixture, state: PipelineState, files: dict[str, str]
+) -> tuple[float | None, list[str]]:
+    """A link counts when the requirements declare it and some generated file names its key."""
+    declared = {
+        (entity.name.casefold(), parent.casefold())
+        for entity in (state.requirements.entities if state.requirements else [])
+        for parent in entity.belongs_to
+    }
+    code = "\n".join(files.values())
+    missing = [
+        f"{child} -> {parent}"
+        for child, parent in fixture.expected.relation_pairs()
+        if (child.casefold(), parent.casefold()) not in declared or foreign_key(parent) not in code
+    ]
+    wanted = len(fixture.expected.relations)
+    return _ratio(wanted - len(missing), wanted), missing
+
+
 def score(fixture: EvalFixture, state: PipelineState, error: str | None) -> FixtureResult:
     expected = fixture.expected
     files = {path: f.content for path, f in state.files.items()}
@@ -107,15 +131,19 @@ def score(fixture: EvalFixture, state: PipelineState, error: str | None) -> Fixt
     metrics["endpoint_recall"] = _ratio(len(wanted & served), len(wanted))
     metrics["design_coverage"] = _ratio(len(designed & served), len(designed))
     metrics["review_score"] = None if state.review is None else state.review.score / 100
+    metrics["relation_recall"], missing_relations = _relation_metric(fixture, state, files)
 
     result = state.test_result
     tests = result.tests if result is not None else None
     collected = tests.collected if tests else 0
     passed = tests.passed if tests else 0
     if result is not None and result.status is not SandboxStatus.ERROR:
-        enough = collected >= expected.min_tests
+        # Skips (e.g. a generated PostgreSQL check with no database configured) neither pass nor
+        # fail, and do not count towards min_tests.
+        ran = collected - (tests.skipped if tests else 0)
+        enough = ran >= expected.min_tests
         metrics["tests_passed"] = float(result.status is SandboxStatus.PASSED and enough)
-        metrics["test_pass_rate"] = _ratio(passed, collected) or 0.0
+        metrics["test_pass_rate"] = _ratio(passed, ran) or 0.0
         metrics["lint_clean"] = _check_passed(result.lint)
         metrics["typecheck_clean"] = _check_passed(result.typecheck)
     if error:
@@ -132,10 +160,12 @@ def score(fixture: EvalFixture, state: PipelineState, error: str | None) -> Fixt
         test_status=result.status.value if result else None,
         tests_collected=collected,
         tests_passed=passed,
+        tests_skipped=tests.skipped if tests else 0,
         test_repair_rounds=int(report["repair_rounds"]) if report else 0,
         files=len(files),
         missing_endpoints=sorted(wanted - served),
         missing_entities=missing_entities,
+        missing_relations=missing_relations,
         spurious_entities=spurious,
     )
 

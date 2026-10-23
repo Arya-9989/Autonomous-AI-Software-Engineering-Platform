@@ -21,6 +21,9 @@ class Expectations(BaseModel):
     # Entities a correct reading of the spec must not invent (e.g. the verb "book" as a Book).
     spurious_entities: list[str] = Field(default_factory=list)
     fields: dict[str, list[str]] = Field(default_factory=dict, description="Entity -> fields")
+    relations: list[str] = Field(
+        default_factory=list, description='Many-to-one links, "Child -> Parent" (a Loan -> Member)'
+    )
     endpoints: list[str] = Field(default_factory=list, description='"METHOD /path" entries')
     min_tests: int = Field(default=1, ge=0)
 
@@ -34,6 +37,21 @@ class Expectations(BaseModel):
             if not path.startswith("/"):
                 raise ValueError(f"endpoint {value!r} needs a path starting with /")
         return values
+
+    @field_validator("relations")
+    @classmethod
+    def _relation_shape(cls, values: list[str]) -> list[str]:
+        for value in values:
+            child, arrow, parent = (part.strip() for part in value.partition("->"))
+            if not (arrow and child and parent):
+                raise ValueError(f"relation {value!r} must look like 'Child -> Parent'")
+        return values
+
+    def relation_pairs(self) -> list[tuple[str, str]]:
+        return [
+            (child.strip(), parent.strip())
+            for child, _, parent in (value.partition("->") for value in self.relations)
+        ]
 
 
 class EvalFixture(BaseModel):

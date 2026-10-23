@@ -7,6 +7,9 @@ expected:
   entities: [Member, Book, Loan]
   fields:
     Loan: [due_date]
+  relations:
+    - Loan -> Member
+    - Loan -> Book
   endpoints:
     - GET /books
     - POST /books

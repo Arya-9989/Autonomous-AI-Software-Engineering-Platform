@@ -2,12 +2,14 @@ name: blog
 description: Text, boolean and optional datetime fields across two entities.
 spec: >-
   A blogging backend. Entities: Post(title, body:text, published:bool,
-  published_at?:datetime), Comment(author, body:text, approved:bool)
+  published_at?:datetime), Comment(post:Post, author, body:text, approved:bool)
 expected:
   entities: [Post, Comment]
   fields:
     Post: [title, body, published, published_at]
     Comment: [author, body, approved]
+  relations:
+    - Comment -> Post
   endpoints:
     - GET /posts
     - POST /posts

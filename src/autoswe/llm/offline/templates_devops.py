@@ -29,11 +29,15 @@ def render_dockerfile(port: int) -> str:
         RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin app
         COPY --from=build /opt/venv /opt/venv
         WORKDIR /home/app
+        COPY alembic.ini ./
+        COPY migrations ./migrations
         USER 10001
         EXPOSE {port}
         HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \\
           CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:{port}/healthz', timeout=3)"]
-        CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "{port}"]
+        # Migrations first (a PostgreSQL advisory lock makes replicas that start together apply
+        # them once), then the server replaces the shell as PID 1.
+        CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port {port}"]
     """)
 
 
@@ -66,6 +70,21 @@ def render_ci(name: str) -> str:
         jobs:
           test:
             runs-on: ubuntu-latest
+            services:
+              postgres:
+                image: postgres:17-alpine
+                env:
+                  POSTGRES_USER: app
+                  POSTGRES_PASSWORD: app
+                  POSTGRES_DB: app_test
+                ports:
+                  - 5432:5432
+                options: >-
+                  --health-cmd "pg_isready -U app -d app_test"
+                  --health-interval 5s --health-timeout 3s --health-retries 10
+            env:
+              # tests/test_migrations.py checks the migrations on this PostgreSQL as well as SQLite.
+              TEST_DATABASE_URL: postgresql+psycopg://app:app@localhost:5432/app_test
             steps:
               - uses: actions/checkout@v7
               - uses: actions/setup-python@v7

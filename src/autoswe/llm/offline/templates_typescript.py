@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from textwrap import dedent
 
+from autoswe.pipeline import relations
 from autoswe.pipeline.artifacts import ArchitectureSpec, Entity, EntityField, GeneratedFile
 from autoswe.pipeline.naming import kebab, pluralize, snake
 
@@ -182,10 +183,21 @@ def render_store() -> str:
 
         export class Store {
           readonly #items = new Map<number, Stored>();
+          /** Stores whose items point at this one's (by `key`): deleting here deletes there. */
+          readonly #dependents: { readonly key: string; readonly store: Store }[] = [];
           #nextId = 1;
 
-          list(limit: number, offset: number): Stored[] {
-            return [...this.#items.values()].slice(offset, offset + limit);
+          /** Items whose `where` keys all equal the given ids, a window of them. */
+          list(limit: number, offset: number, where: Readonly<Record<string, number>> = {}): Stored[] {
+            const conditions = Object.entries(where);
+            return [...this.#items.values()]
+              .filter((item) => conditions.every(([key, value]) => item[key] === value))
+              .slice(offset, offset + limit);
+          }
+
+          /** Register `store`'s items as children of this store's items through their `key`. */
+          cascadeTo(key: string, store: Store): void {
+            this.#dependents.push({ key, store });
           }
 
           get(id: number): Stored | undefined {
@@ -207,10 +219,21 @@ def render_store() -> str:
           }
 
           delete(id: number): boolean {
-            return this.#items.delete(id);
+            if (!this.#items.delete(id)) return false;
+            for (const { key, store } of this.#dependents) {
+              for (const item of [...store.#items.values()]) {
+                if (item[key] === id) store.delete(item.id);
+              }
+            }
+            return true;
           }
         }
     """)
+
+
+def _references(entity: Entity) -> list[tuple[str, str]]:
+    """(parent, foreign key) pairs; ``entity.belongs_to`` is already normalised."""
+    return [(parent, relations.foreign_key(parent)) for parent in entity.belongs_to]
 
 
 def render_models(entities: list[Entity]) -> str:
@@ -224,6 +247,7 @@ def render_models(entities: list[Entity]) -> str:
         for field in entity.fields:
             ts_type = _TS_TYPES[field.type] + ("" if field.required else " | null")
             lines.append(f"  {field.name}: {ts_type};")
+        lines += [f"  {key}: number;" for _, key in _references(entity)]
         lines += ["  created_at: string;", "}", ""]
         lines.append(f"export const {_camel(entity.name)}Fields: readonly FieldSpec[] = [")
         for field in entity.fields:
@@ -231,6 +255,10 @@ def render_models(entities: list[Entity]) -> str:
             lines.append(
                 f'  {{ name: "{field.name}", type: "{field.type}", required: {required} }},'
             )
+        lines += [
+            f'  {{ name: "{key}", type: "integer", required: true }},'
+            for _, key in _references(entity)
+        ]
         lines.append("];")
     return "\n".join(lines) + "\n"
 
@@ -238,12 +266,16 @@ def render_models(entities: list[Entity]) -> str:
 def render_app(entities: list[Entity]) -> str:
     imports = ", ".join(sorted(f"{_camel(e.name)}Fields" for e in entities))
     lines = []
-    for entity in entities:
+    for entity in relations.creation_order(entities):  # a parent's store exists before its children
         var = _camel(pluralize(entity.name))
-        base = "/" + kebab(pluralize(entity.name))
-        lines += [
-            f'  const {var} = resource("{entity.name}", {_camel(entity.name)}Fields);',
+        refs = [
+            f'{{ key: "{key}", label: "{parent}", store: {_camel(pluralize(parent))}.store }}'
+            for parent, key in _references(entity)
         ]
+        args = f'"{entity.name}", {_camel(entity.name)}Fields' + (
+            ", [" + ", ".join(refs) + "]" if refs else ""
+        )
+        lines.append(f"  const {var} = resource({args});")
     routes = ['    { method: "GET", path: "/healthz", handle: ({ response }) => send(response, 200, '
               '{ status: "ok" }) },']  # fmt: skip
     for entity in entities:
@@ -362,25 +394,61 @@ def render_app(entities: list[Entity]) -> str:
           return { limit, offset };
         }
 
-        function idOf(params: Readonly<Record<string, string>>): number | undefined {
-          const raw = params.id ?? "";
+        function positive(raw: string): number | undefined {
           const id = Number(raw);
           return /^[1-9][0-9]*$/.test(raw) && Number.isSafeInteger(id) ? id : undefined;
         }
 
+        function idOf(params: Readonly<Record<string, string>>): number | undefined {
+          return positive(params.id ?? "");
+        }
+
+        /** A many-to-one link: `key` holds the id of an item in the parent's `store`. */
+        interface Reference {
+          readonly key: string;
+          readonly label: string;
+          readonly store: Store;
+        }
+
         /** CRUD handlers for one entity, over its own in-memory store. */
-        function resource(label: string, fields: readonly FieldSpec[]) {
+        function resource(label: string, fields: readonly FieldSpec[], references: readonly Reference[] = []) {
           const store = new Store();
+          for (const reference of references) reference.store.cascadeTo(reference.key, store);
           const notFound = { detail: `${label} not found` };
+          /** The first referenced parent that does not exist, as an error message. */
+          const missingParent = (data: Record<string, unknown>): string | undefined => {
+            for (const { key, label: parent, store: parents } of references) {
+              const value = data[key];
+              if (typeof value === "number" && parents.get(value) === undefined) return `${parent} ${value} not found`;
+            }
+            return undefined;
+          };
           return {
+            store,
             list: ({ response, url }: Context) => {
               const window = page(url);
+              const where: Record<string, number> = {};
+              for (const { key } of references) {
+                const raw = url.searchParams.get(key);
+                if (raw === null) continue;
+                const id = positive(raw);
+                if (id === undefined) {
+                  send(response, 422, { detail: [`${key}: expected a positive integer`] });
+                  return;
+                }
+                where[key] = id;
+              }
               if (window === undefined) send(response, 422, { detail: ["limit or offset out of range"] });
-              else send(response, 200, store.list(window.limit, window.offset));
+              else send(response, 200, store.list(window.limit, window.offset, where));
             },
             create: async ({ request, response }: Context) => {
               const checked = validate(fields, await readJson(request), false);
-              if ("errors" in checked) send(response, 422, { detail: checked.errors });
+              if ("errors" in checked) {
+                send(response, 422, { detail: checked.errors });
+                return;
+              }
+              const missing = missingParent(checked.data);
+              if (missing !== undefined) send(response, 422, { detail: missing });
               else send(response, 201, store.create(checked.data));
             },
             get: ({ response, params }: Context) => {
@@ -398,6 +466,15 @@ def render_app(entities: list[Entity]) -> str:
               const checked = validate(fields, await readJson(request), true);
               if ("errors" in checked) {
                 send(response, 422, { detail: checked.errors });
+                return;
+              }
+              if (store.get(id) === undefined) {
+                send(response, 404, notFound);
+                return;
+              }
+              const missing = missingParent(checked.data);
+              if (missing !== undefined) {
+                send(response, 422, { detail: missing });
                 return;
               }
               const item = store.update(id, checked.data);
@@ -471,11 +548,40 @@ def render_test_server() -> str:
     """)
 
 
-def render_entity_test(entity: Entity) -> str:
+def _ancestors(entity: Entity, by_name: dict[str, Entity]) -> list[Entity]:
+    """Every entity ``entity`` needs created first, parents of parents before their children."""
+    ordered: list[Entity] = []
+
+    def visit(name: str) -> None:
+        for parent in by_name[name].belongs_to:
+            if by_name[parent] not in ordered:
+                visit(parent)
+                ordered.append(by_name[parent])
+
+    visit(entity.name)
+    return ordered
+
+
+def _body(constant: str, entity: Entity) -> str:
+    """A request body: the sample payload plus a freshly created parent for each reference."""
+    if not entity.belongs_to:
+        return constant
+    keys = ", ".join(f"{key}: await {_maker_name(parent)}()" for parent, key in _references(entity))
+    return f"{{ ...{constant}, {keys} }}"
+
+
+def _maker_name(parent: str) -> str:
+    return "make" + parent
+
+
+def render_entity_test(entity: Entity, entities: list[Entity] | None = None) -> str:
+    by_name = {e.name: e for e in (entities or [entity])}
     prefix = "/" + kebab(pluralize(entity.name))
     comparable = [f for f in entity.fields if f.type not in {"date", "datetime"}]
     target = next((f for f in entity.fields if f.type in {"string", "text"}), entity.fields[0])
     payload = ", ".join(f"{f.name}: {_sample(f)}" for f in entity.fields)
+    ancestors = _ancestors(entity, by_name)
+    body = "await payload()" if entity.belongs_to else "PAYLOAD"
     lines = [
         'import assert from "node:assert/strict";',
         'import { after, before, describe, it } from "node:test";',
@@ -483,6 +589,11 @@ def render_entity_test(entity: Entity) -> str:
         'import { json, patch, post, type Running, start } from "./server.ts";',
         "",
         f"const PAYLOAD = {{ {payload} }};",
+    ]
+    for ancestor in ancestors:
+        sample = ", ".join(f"{f.name}: {_sample(f)}" for f in ancestor.fields)
+        lines.append(f"const {snake(ancestor.name).upper()} = {{ {sample} }};")
+    lines += [
         "",
         f'describe("{prefix}", () => {{',
         "  let app: Running;",
@@ -490,12 +601,35 @@ def render_entity_test(entity: Entity) -> str:
         "    app = await start();",
         "  });",
         "  after(() => app.close());",
+    ]
+    for ancestor in ancestors:
+        path = "/" + kebab(pluralize(ancestor.name))
+        lines += [
+            "",
+            f"  async function {_maker_name(ancestor.name)}(): Promise<number> {{",
+            f"    const response = await post(`${{app.url}}{path}`, "
+            f"{_body(snake(ancestor.name).upper(), ancestor)});",
+            "    assert.equal(response.status, 201);",
+            "    return (await json(response)).id as number;",
+            "  }",
+        ]
+    if entity.belongs_to:
+        lines += [
+            "",
+            "  async function payload(): Promise<Record<string, unknown>> {",
+            f"    return {_body('PAYLOAD', entity)};",
+            "  }",
+        ]
+    lines += [
         "",
         '  it("creates and reads one", async () => {',
-        f"    const response = await post(`${{app.url}}{prefix}`, PAYLOAD);",
+        *(["    const body = await payload();"] if entity.belongs_to else []),
+        f"    const response = await post(`${{app.url}}{prefix}`, "
+        f"{'body' if entity.belongs_to else 'PAYLOAD'});",
         "    assert.equal(response.status, 201);",
         "    const created = await json(response);",
         *[f"    assert.equal(created.{f.name}, PAYLOAD.{f.name});" for f in comparable],
+        *[f"    assert.equal(created.{key}, body.{key});" for _, key in _references(entity)],
         f"    const fetched = await fetch(`${{app.url}}{prefix}/${{created.id}}`);",
         "    assert.equal(fetched.status, 200);",
         "    assert.equal((await json(fetched)).id, created.id);",
@@ -503,7 +637,7 @@ def render_entity_test(entity: Entity) -> str:
         "",
         '  it("lists with limit and offset", async () => {',
         "    for (let i = 0; i < 3; i++) {",
-        f"      assert.equal((await post(`${{app.url}}{prefix}`, PAYLOAD)).status, 201);",
+        f"      assert.equal((await post(`${{app.url}}{prefix}`, {body})).status, 201);",
         "    }",
         f"    const page = await fetch(`${{app.url}}{prefix}?limit=2&offset=1`);",
         "    assert.equal(page.status, 200);",
@@ -512,7 +646,7 @@ def render_entity_test(entity: Entity) -> str:
         "  });",
         "",
         '  it("updates one", async () => {',
-        f"    const created = await json(await post(`${{app.url}}{prefix}`, PAYLOAD));",
+        f"    const created = await json(await post(`${{app.url}}{prefix}`, {body}));",
         f"    const response = await patch(`${{app.url}}{prefix}/${{created.id}}`, "
         f"{{ {target.name}: {_sample(target, updated=True)} }});",
         "    assert.equal(response.status, 200);",
@@ -520,7 +654,7 @@ def render_entity_test(entity: Entity) -> str:
         "  });",
         "",
         '  it("deletes one", async () => {',
-        f"    const created = await json(await post(`${{app.url}}{prefix}`, PAYLOAD));",
+        f"    const created = await json(await post(`${{app.url}}{prefix}`, {body}));",
         f'    const deleted = await fetch(`${{app.url}}{prefix}/${{created.id}}`, {{ method: "DELETE" }});',
         "    assert.equal(deleted.status, 204);",
         f"    assert.equal((await fetch(`${{app.url}}{prefix}/${{created.id}}`)).status, 404);",
@@ -534,9 +668,39 @@ def render_entity_test(entity: Entity) -> str:
         '  it("rejects invalid input with 422", async () => {',
         f"    assert.equal((await post(`${{app.url}}{prefix}`, {{ unknown_field: 1 }})).status, 422);",
     ]
-    if any(f.required for f in entity.fields):
+    if any(f.required for f in entity.fields) or entity.belongs_to:
         lines.append(f"    assert.equal((await post(`${{app.url}}{prefix}`, {{}})).status, 422);")
-    lines += ["  });", "});"]
+    lines.append("  });")
+    if entity.belongs_to:
+        parent, key = _references(entity)[0]
+        parent_path = "/" + kebab(pluralize(parent))
+        lines += [
+            "",
+            f'  it("requires an existing {parent.lower()}", async () => {{',
+            f"    const response = await post(`${{app.url}}{prefix}`, "
+            f"{{ ...(await payload()), {key}: 999999 }});",
+            "    assert.equal(response.status, 422);",
+            f'    assert.equal((await json(response)).detail, "{parent} 999999 not found");',
+            "  });",
+            "",
+            f'  it("filters by {parent.lower()}", async () => {{',
+            "    const mine = await payload();",
+            f"    assert.equal((await post(`${{app.url}}{prefix}`, mine)).status, 201);",
+            f"    assert.equal((await post(`${{app.url}}{prefix}`, await payload())).status, 201);",
+            f"    const page = await fetch(`${{app.url}}{prefix}?{key}=${{String(mine.{key})}}`);",
+            "    const rows = (await page.json()) as Record<string, unknown>[];",
+            f"    assert.deepEqual(rows.map((row) => row.{key}), [mine.{key}]);",
+            f"    assert.equal((await fetch(`${{app.url}}{prefix}?{key}=0`)).status, 422);",
+            "  });",
+            "",
+            f'  it("is deleted with its {parent.lower()}", async () => {{',
+            f"    const created = await json(await post(`${{app.url}}{prefix}`, await payload()));",
+            f"    const parent = `${{app.url}}{parent_path}/${{String(created.{key})}}`;",
+            '    assert.equal((await fetch(parent, { method: "DELETE" })).status, 204);',
+            f"    assert.equal((await fetch(`${{app.url}}{prefix}/${{String(created.id)}}`)).status, 404);",
+            "  });",
+        ]
+    lines.append("});")
     return "\n".join(lines) + "\n"
 
 
@@ -573,7 +737,9 @@ def render_readme(name: str, summary: str, architecture: ArchitectureSpec) -> st
         > Review the code before deploying it anywhere that matters.
 
         TypeScript on Node.js 24 with no runtime dependencies. Data is kept in memory, so run one
-        replica until a database replaces `src/store.ts`.
+        replica until a database replaces `src/store.ts`. A record that belongs to another (a
+        `<parent>_id` field) must point at one that exists, lists can be filtered by it, and
+        deleting the parent deletes its children.
 
         ## Run and test
 
@@ -596,7 +762,7 @@ def render_readme(name: str, summary: str, architecture: ArchitectureSpec) -> st
 def render_project(
     project: str, summary: str, architecture: ArchitectureSpec
 ) -> list[GeneratedFile]:
-    entities = architecture.entities
+    entities = relations.normalise(architecture.entities)
     files = [
         GeneratedFile(path="package.json", content=render_package_json(project, summary),
                       description="Package metadata, scripts and development dependencies"),
@@ -626,7 +792,7 @@ def render_project(
         files.append(
             GeneratedFile(
                 path=f"test/{module}.test.ts",
-                content=render_entity_test(entity),
+                content=render_entity_test(entity, entities),
                 description=f"API tests for {pluralize(entity.name).lower()}",
             )
         )

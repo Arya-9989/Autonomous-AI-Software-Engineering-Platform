@@ -6,6 +6,7 @@
 fastapi>=0.115
 pydantic>=2.10
 sqlalchemy>=2.0.36
+alembic>=1.16
 httpx2>=2.16
 pytest>=8.3
 ruff>=0.9
