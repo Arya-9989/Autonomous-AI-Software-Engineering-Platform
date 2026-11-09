@@ -1,5 +1,5 @@
 import { AnimatePresence, m } from "motion/react";
-import { useEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 
 import { Skeleton } from "../components/ui";
 import type { StreamStatus } from "../hooks/useJobEvents";
@@ -18,10 +18,12 @@ const STREAM_LABEL: Record<StreamStatus, string> = {
 /** Streaming event log (SSE): replayed history, then live events as they are stored. */
 export function ActivityLog({ events, status }: { events: JobEvent[]; status: StreamStatus }) {
   const scroller = useRef<HTMLDivElement>(null);
+  const follow = useRef(true);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (events.length === 0) follow.current = true;
     const element = scroller.current;
-    if (element) element.scrollTop = element.scrollHeight;
+    if (element && follow.current) element.scrollTop = element.scrollHeight;
   }, [events.length]);
 
   return (
@@ -41,6 +43,10 @@ export function ActivityLog({ events, status }: { events: JobEvent[]; status: St
       </div>
       <div
         ref={scroller}
+        onScroll={(event) => {
+          const element = event.currentTarget;
+          follow.current = element.scrollHeight - element.scrollTop - element.clientHeight <= 24;
+        }}
         className="scrollbar-thin max-h-80 min-h-48 flex-1 overflow-y-auto px-5 py-4 lg:max-h-none"
         role="log"
         aria-live="polite"

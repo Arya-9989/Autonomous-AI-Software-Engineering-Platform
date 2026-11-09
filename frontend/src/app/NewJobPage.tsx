@@ -57,7 +57,7 @@ export function NewJobPage() {
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (valid && !create.isPending) create.mutate();
+    if (valid && info.isSuccess && !create.isPending) create.mutate();
   };
 
   return (
@@ -80,6 +80,7 @@ export function NewJobPage() {
         <textarea
           id={specId}
           value={spec}
+          disabled={create.isPending}
           onChange={(e) => setSpec(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit(e);
@@ -87,6 +88,7 @@ export function NewJobPage() {
           rows={6}
           maxLength={max}
           aria-describedby={hintId}
+          aria-invalid={length > 0 && !valid}
           placeholder="A REST API for a small library: members borrow books, librarians track loans and due dates…"
           className="block w-full resize-y bg-transparent px-6 pt-5 pb-3 text-[17px] leading-[25px] tracking-[-0.022em] text-ink outline-none placeholder:text-ink-2"
         />
@@ -96,6 +98,7 @@ export function NewJobPage() {
             <button
               key={example.label}
               type="button"
+              disabled={create.isPending}
               onClick={() => setSpec(example.spec)}
               className="hit-44 rounded-full bg-ink/[0.05] px-3 py-1 text-[12px] leading-4 tracking-[-0.01em] text-ink transition-colors duration-200 hover:bg-accent-soft hover:text-accent-ink"
             >
@@ -115,6 +118,7 @@ export function NewJobPage() {
                   key={p.name}
                   type="button"
                   role="radio"
+                  disabled={create.isPending}
                   aria-checked={selected === p.name}
                   // One tab stop for the group; arrow keys move and select (WAI-ARIA radio group).
                   tabIndex={selected === p.name ? 0 : -1}
@@ -139,12 +143,14 @@ export function NewJobPage() {
               ))}
             </div>
           ) : (
-            <p className="text-[12px] leading-4 text-ink-2">
+            <p role="status" className="text-[12px] leading-4 text-ink-2">
               {selected === "offline"
                 ? "Offline provider: deterministic templates, no API key needed."
                 : selected
                   ? `Provider: ${selected}`
-                  : " "}
+                  : info.isPending
+                    ? "Loading project settings…"
+                    : " "}
             </p>
           )}
           <div className="flex items-center gap-3 sm:ml-auto">
@@ -156,15 +162,17 @@ export function NewJobPage() {
               )}
               aria-live="polite"
             >
-              {length > 0 && length < min
-                ? `${min - length} more characters`
-                : `${length.toLocaleString("en")} / ${max.toLocaleString("en")}`}
+              {length === 0
+                ? `At least ${min} characters`
+                : length < min
+                  ? `${min - length} more characters`
+                  : `${length.toLocaleString("en")} / ${max.toLocaleString("en")}`}
             </span>
             <Button
               type="submit"
               variant="primary"
               size="sm"
-              disabled={!valid}
+              disabled={!valid || !info.isSuccess}
               loading={create.isPending}
               className="flex-1 sm:flex-none"
               icon={<ArrowUp className="size-4" aria-hidden />}
@@ -174,6 +182,11 @@ export function NewJobPage() {
           </div>
         </div>
       </form>
+      {info.isError && (
+        <div className="mt-4">
+          <ErrorState error={info.error} onRetry={() => void info.refetch()} />
+        </div>
+      )}
       {create.isError && (
         <div className="mt-4">
           <ErrorState error={create.error} />

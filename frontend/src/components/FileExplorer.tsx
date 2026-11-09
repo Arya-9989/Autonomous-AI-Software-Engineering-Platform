@@ -66,7 +66,7 @@ function TreeItem({
           style={indent}
           aria-current={active ? "true" : undefined}
           className={cx(
-            "flex w-full items-center gap-2 rounded-lg py-1.5 pr-2 text-left text-[13px] leading-[18px] transition-colors duration-200 pointer-coarse:py-2.5",
+            "flex w-full items-center gap-2 rounded-lg py-1.5 pr-2 text-left text-[13px] leading-[18px] transition-colors duration-200 pointer-coarse:min-h-11 pointer-coarse:py-2.5",
             active ? "bg-accent-soft font-medium text-accent-ink" : "text-ink hover:bg-ink/[0.05]",
           )}
         >
@@ -85,7 +85,7 @@ function TreeItem({
         onClick={() => toggle(node.path)}
         style={indent}
         aria-expanded={open}
-        className="flex w-full items-center gap-2 rounded-lg py-1.5 pr-2 text-left text-[13px] leading-[18px] text-ink transition-colors duration-200 hover:bg-ink/[0.05] pointer-coarse:py-2.5"
+        className="flex w-full items-center gap-2 rounded-lg py-1.5 pr-2 text-left text-[13px] leading-[18px] text-ink transition-colors duration-200 hover:bg-ink/[0.05] pointer-coarse:min-h-11 pointer-coarse:py-2.5"
       >
         <ChevronRight
           className={cx(

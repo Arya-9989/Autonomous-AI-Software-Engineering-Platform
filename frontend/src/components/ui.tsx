@@ -172,7 +172,7 @@ export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () =>
       className="flex flex-col items-start gap-3 rounded-[14px] bg-bad-soft p-4 text-[14px] leading-5 text-bad sm:flex-row sm:items-center"
     >
       <AlertTriangle className="size-5 shrink-0" aria-hidden />
-      <p className="flex-1">{message}</p>
+      <p className="min-w-0 flex-1 [overflow-wrap:anywhere]">{message}</p>
       {onRetry && (
         <Button size="sm" variant="danger" icon={<RotateCw className="size-3.5" />} onClick={onRetry}>
           Try again
