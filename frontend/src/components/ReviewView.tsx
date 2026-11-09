@@ -97,11 +97,12 @@ export function ReviewView({ jobId, onOpenFile }: { jobId: string; onOpenFile: (
         ) : (
           <ul className="divide-y divide-hairline">
             {issues.map((issue, index) => {
-              const { icon: Icon, className } = SEVERITY[issue.severity];
+              const { icon: Icon, className, label } = SEVERITY[issue.severity];
               return (
                 <li key={index} className="flex gap-3 py-2 text-sm">
                   <Icon className={cx("mt-0.5 size-4 shrink-0", className)} aria-hidden />
                   <div className="min-w-0">
+                    <span className="sr-only">{label}: </span>
                     <p>{issue.message}</p>
                     <p className="font-mono text-[11px] text-ink-2">
                       {issue.rule}

@@ -73,8 +73,23 @@ export function ArchitectureView({ jobId }: { jobId: string }) {
               API endpoints
             </SectionTitle>
           </div>
-          <div className="scrollbar-thin max-h-[26rem] overflow-y-auto">
+          <div
+            className="scrollbar-thin max-h-[26rem] overflow-y-auto"
+            role="region"
+            aria-label="API endpoints"
+            tabIndex={0}
+          >
             <table className="w-full text-left text-sm">
+              <caption className="sr-only">API endpoints</caption>
+              <thead className="sr-only">
+                <tr>
+                  <th scope="col">Method</th>
+                  <th scope="col">Path</th>
+                  <th scope="col" className="max-sm:hidden">
+                    Summary
+                  </th>
+                </tr>
+              </thead>
               <tbody className="divide-y divide-hairline">
                 {arch.endpoints.map((endpoint) => (
                   <tr key={`${endpoint.method} ${endpoint.path}`}>
